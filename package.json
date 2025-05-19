@@ -1,0 +1,175 @@
+{
+  "name": "vscode-sikg",
+  "displayName": "SIKG - Semantic Impact Knowledge Graph",
+  "description": "Intelligently select test cases based on semantic change impact analysis",
+  "version": "0.1.0",
+  "publisher": "sikg",
+  "engines": {
+    "vscode": "^1.70.0"
+  },
+  "categories": [
+    "Testing",
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "sikg.analyzeChanges",
+        "title": "SIKG: Analyze Changes and Prioritize Tests",
+        "icon": "$(testing-run-icon)"
+      },
+      {
+        "command": "sikg.runPrioritizedTests",
+        "title": "SIKG: Run Prioritized Tests",
+        "icon": "$(play)"
+      },
+      {
+        "command": "sikg.visualizeGraph",
+        "title": "SIKG: Visualize Impact Graph",
+        "icon": "$(graph)"
+      },
+      {
+        "command": "sikg.rebuildGraph",
+        "title": "SIKG: Rebuild Knowledge Graph",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "sikg.showResults",
+        "title": "SIKG: Show Results",
+        "icon": "$(list-flat)"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "sikg-sidebar",
+          "title": "SIKG",
+          "icon": "$(test-view-icon)"
+        }
+      ]
+    },
+    "views": {
+      "sikg-sidebar": [
+        {
+          "id": "sikgView",
+          "name": "Test Impact Analysis",
+          "type": "webview"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "sikg.analyzeChanges",
+          "when": "view == sikgView",
+          "group": "navigation"
+        },
+        {
+          "command": "sikg.runPrioritizedTests",
+          "when": "view == sikgView",
+          "group": "navigation"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "SIKG",
+      "properties": {
+        "sikg.logLevel": {
+          "type": "string",
+          "enum": ["debug", "info", "warn", "error"],
+          "default": "info",
+          "description": "Log level for the extension"
+        },
+        "sikg.analyzeOnSave": {
+          "type": "boolean",
+          "default": false,
+          "description": "Automatically analyze changes when a file is saved"
+        },
+        "sikg.codeFileExtensions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": ["ts", "js", "tsx", "jsx", "java", "py", "cs", "go"],
+          "description": "File extensions to consider as code files"
+        },
+        "sikg.testFilePatterns": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "**/*.test.{ts,js,tsx,jsx}",
+            "**/*.spec.{ts,js,tsx,jsx}",
+            "**/*Test.{java,kt}",
+            "**/*Tests.{cs,fs}",
+            "**/*_test.go",
+            "**/test_*.py",
+            "**/*_test.py"
+          ],
+          "description": "Glob patterns to identify test files"
+        },
+        "sikg.excludePatterns": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "**/node_modules/**",
+            "**/dist/**",
+            "**/build/**",
+            "**/coverage/**",
+            "**/.git/**"
+          ],
+          "description": "Patterns to exclude from analysis"
+        },
+        "sikg.maxTraversalDepth": {
+          "type": "number",
+          "default": 5,
+          "description": "Maximum traversal depth for impact propagation"
+        },
+        "sikg.minImpactThreshold": {
+          "type": "number",
+          "default": 0.05,
+          "description": "Minimum impact threshold to continue propagation (0-1)"
+        },
+        "sikg.highImpactThreshold": {
+          "type": "number",
+          "default": 0.7,
+          "description": "Threshold for high impact tests (0-1)"
+        },
+        "sikg.lowImpactThreshold": {
+          "type": "number",
+          "default": 0.3,
+          "description": "Threshold for low impact tests (0-1)"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile",
+    "test": "node ./out/test/runTest.js",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/glob": "^7.2.0",
+    "@types/mocha": "^10.0.1",
+    "@types/node": "16.x",
+    "@types/vscode": "^1.70.0",
+    "@vscode/test-electron": "^2.3.0",
+    "@vscode/vsce": "^2.19.0",
+    "glob": "^8.1.0",
+    "mocha": "^10.2.0",
+    "typescript": "^5.0.4"
+  },
+  "dependencies": {
+    "crypto": "^1.0.1"
+  }
+}
