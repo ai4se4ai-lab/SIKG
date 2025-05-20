@@ -16,31 +16,19 @@ export class TestParser {
     /**
      * Parse a test file and extract test cases
      */
+
     public async parseTestFile(content: string, filePath: string): Promise<TestCase[]> {
         Logger.debug(`Parsing test file: ${filePath}`);
         const testCases: TestCase[] = [];
         
         try {
-            // Determine the test framework based on file content and extension
+            // Only handle Python test files
             const extension = path.extname(filePath).toLowerCase();
             
-            if (content.includes('describe(') && content.includes('it(')) {
-                // Jasmine/Mocha/Jest style tests
-                return this.parseJasmineStyleTests(content, filePath);
-            } else if (content.includes('@Test') || content.includes('extends TestCase')) {
-                // JUnit style tests
-                return this.parseJUnitStyleTests(content, filePath);
-            } else if (content.includes('unittest') || content.includes('pytest')) {
-                // Python unittest or pytest
+            if (extension === '.py' && (content.includes('unittest') || content.includes('pytest'))) {
                 return this.parsePythonTests(content, filePath);
-            } else if (content.includes('[TestClass]') || content.includes('[TestMethod]')) {
-                // .NET/MSTest style
-                return this.parseDotNetTests(content, filePath);
-            } else if (content.includes('test(') || content.includes('func Test')) {
-                // Go tests
-                return this.parseGoTests(content, filePath);
             } else {
-                // Generic test parser as fallback
+                // Use generic parser as fallback for any Python files that look like tests
                 return this.parseGenericTests(content, filePath);
             }
         } catch (error) {
@@ -48,6 +36,8 @@ export class TestParser {
             return [];
         }
     }
+
+// Remove all other language-specific parse methods except parsePythonTests and parseGenericTests
 
     /**
      * Parse Jasmine/Mocha/Jest style tests (JavaScript/TypeScript)
@@ -305,10 +295,341 @@ export class TestParser {
     /**
      * Parse Python unittest or pytest tests
      */
-    private parsePythonTests(content: string, filePath: string): TestCase[] {
-        // Simplified implementation - in a real extension, use Python AST parsing
-        return this.parseGenericTests(content, filePath);
+    // Enhanced parsePythonTests method for TestParser.ts (continued)
+
+private parsePythonTests(content: string, filePath: string): TestCase[] {
+    Logger.debug(`Parsing Python test file: ${filePath}`);
+    const testCases: TestCase[] = [];
+    const lines = content.split('\n');
+    
+    try {
+        // Detect unittest and pytest style tests
+        const isUnittest = content.includes('import unittest') || content.includes('from unittest');
+        const isPytest = content.includes('import pytest') || content.includes('from pytest');
+        
+        // Track class contexts for unittest
+        const classStack: { name: string, line: number, indentation: number }[] = [];
+        
+        // Process the file line by line
+        for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+            const line = lines[lineIndex];
+            const indentation = this.getIndentation(line);
+            
+            // Maintain the class stack based on indentation
+            while (classStack.length > 0 && classStack[classStack.length - 1].indentation >= indentation) {
+                classStack.pop();
+            }
+            
+            if (isUnittest) {
+                // Look for unittest test classes
+                const classMatch = line.match(/^\s*class\s+(\w+)(?:\(([^)]*)\))?:/);
+                if (classMatch) {
+                    const className = classMatch[1];
+                    const parentClass = classMatch[2];
+                    
+                    // Check if this is a test class (inherits from TestCase)
+                    if (parentClass && (parentClass.includes('TestCase') || parentClass.includes('unittest'))) {
+                        classStack.push({ 
+                            name: className,
+                            line: lineIndex,
+                            indentation
+                        });
+                    }
+                    continue;
+                }
+                
+                // Look for test methods in unittest style
+                if (classStack.length > 0) {
+                    const methodMatch = line.match(/^\s*def\s+(test\w*)\s*\(self(?:,\s*[^)]*)??\):/);
+                    if (methodMatch) {
+                        const methodName = methodMatch[1];
+                        const className = classStack[classStack.length - 1].name;
+                        const testName = `${className}.${methodName}`;
+                        
+                        // Find the end of the test method
+                        let endLine = lineIndex;
+                        const methodIndentation = indentation;
+                        
+                        // Look ahead to find where this method ends
+                        for (let i = lineIndex + 1; i < lines.length; i++) {
+                            const nextLine = lines[i].trim();
+                            if (nextLine.length > 0) {
+                                const nextIndentation = this.getIndentation(lines[i]);
+                                if (nextIndentation <= methodIndentation) {
+                                    endLine = i - 1;
+                                    break;
+                                }
+                                
+                                // If we reach the end of the file
+                                if (i === lines.length - 1) {
+                                    endLine = i;
+                                }
+                            }
+                        }
+                        
+                        // Extract the test body
+                        const testBody = lines.slice(lineIndex, endLine + 1).join('\n');
+                        
+                        // Create a unique ID for the test
+                        const testId = this.generateNodeId(testName, filePath);
+                        
+                        // Create the test case
+                        const testCase: TestCase = {
+                            id: testId,
+                            name: testName,
+                            testType: this.detectTestType(testBody, testName),
+                            filePath,
+                            loc: {
+                                start: { line: lineIndex + 1, column: line.indexOf(methodName) },
+                                end: { line: endLine + 1, column: 0 }
+                            },
+                            coveredElements: []
+                        };
+                        
+                        // Find code elements this test covers
+                        this.identifyPythonCoveredCode(testBody, testCase, filePath);
+                        
+                        testCases.push(testCase);
+                    }
+                }
+            } else if (isPytest) {
+                // Look for pytest style test functions
+                const functionMatch = line.match(/^\s*def\s+(test\w*)\s*\(([^)]*)\):/);
+                if (functionMatch) {
+                    const functionName = functionMatch[1];
+                    
+                    // Find the end of the test function
+                    let endLine = lineIndex;
+                    const functionIndentation = indentation;
+                    
+                    // Look ahead to find where this function ends
+                    for (let i = lineIndex + 1; i < lines.length; i++) {
+                        const nextLine = lines[i].trim();
+                        if (nextLine.length > 0) {
+                            const nextIndentation = this.getIndentation(lines[i]);
+                            if (nextIndentation <= functionIndentation) {
+                                endLine = i - 1;
+                                break;
+                            }
+                            
+                            // If we reach the end of the file
+                            if (i === lines.length - 1) {
+                                endLine = i;
+                            }
+                        }
+                    }
+                    
+                    // Extract the test body
+                    const testBody = lines.slice(lineIndex, endLine + 1).join('\n');
+                    
+                    // Create a unique ID for the test
+                    const testId = this.generateNodeId(functionName, filePath);
+                    
+                    // Create the test case
+                    const testCase: TestCase = {
+                        id: testId,
+                        name: functionName,
+                        testType: this.detectTestType(testBody, functionName),
+                        filePath,
+                        loc: {
+                            start: { line: lineIndex + 1, column: line.indexOf(functionName) },
+                            end: { line: endLine + 1, column: 0 }
+                        },
+                        coveredElements: []
+                    };
+                    
+                    // Find code elements this test covers
+                    this.identifyPythonCoveredCode(testBody, testCase, filePath);
+                    
+                    testCases.push(testCase);
+                }
+            } else {
+                // Generic approach for other Python testing frameworks or custom test functions
+                const functionMatch = line.match(/^\s*def\s+(test\w*)\s*\(([^)]*)\):/);
+                if (functionMatch) {
+                    const functionName = functionMatch[1];
+                    
+                    // Find the end of the test function
+                    let endLine = lineIndex;
+                    const functionIndentation = indentation;
+                    
+                    // Look ahead to find where this function ends
+                    for (let i = lineIndex + 1; i < lines.length; i++) {
+                        const nextLine = lines[i].trim();
+                        if (nextLine.length > 0) {
+                            const nextIndentation = this.getIndentation(lines[i]);
+                            if (nextIndentation <= functionIndentation) {
+                                endLine = i - 1;
+                                break;
+                            }
+                            
+                            // If we reach the end of the file
+                            if (i === lines.length - 1) {
+                                endLine = i;
+                            }
+                        }
+                    }
+                    
+                    // Extract the test body
+                    const testBody = lines.slice(lineIndex, endLine + 1).join('\n');
+                    
+                    // Create a unique ID for the test
+                    const testId = this.generateNodeId(functionName, filePath);
+                    
+                    // Create the test case
+                    const testCase: TestCase = {
+                        id: testId,
+                        name: functionName,
+                        testType: this.detectTestType(testBody, functionName),
+                        filePath,
+                        loc: {
+                            start: { line: lineIndex + 1, column: line.indexOf(functionName) },
+                            end: { line: endLine + 1, column: 0 }
+                        },
+                        coveredElements: []
+                    };
+                    
+                    // Find code elements this test covers
+                    this.identifyPythonCoveredCode(testBody, testCase, filePath);
+                    
+                    testCases.push(testCase);
+                }
+            }
+        }
+        
+        return testCases;
+        
+    } catch (error) {
+        Logger.error(`Error parsing Python test file ${filePath}:`, error);
+        return [];
     }
+}
+
+/**
+ * Identify which code elements a Python test covers
+ */
+private identifyPythonCoveredCode(testBody: string, testCase: TestCase, filePath: string): void {
+    // Set to track unique IDs
+    const coveredIds = new Set<string>();
+    
+    // Look for module imports
+    const importPattern = /(?:from\s+(\S+)\s+)?import\s+(.+)/g;
+    let importMatch;
+    while ((importMatch = importPattern.exec(testBody)) !== null) {
+        const fromModule = importMatch[1] || '';
+        const importedItems = importMatch[2].split(',').map(item => {
+            // Handle "import x as y" syntax
+            const asParts = item.trim().split(/\s+as\s+/);
+            return asParts[0].trim();
+        });
+        
+        for (const item of importedItems) {
+            const importPath = fromModule ? `${fromModule}.${item}` : item;
+            
+            // Add to covered elements
+            const moduleId = this.codeParser.generateElementId('module', importPath, importPath);
+            if (!coveredIds.has(moduleId)) {
+                coveredIds.add(moduleId);
+                testCase.coveredElements.push({
+                    targetId: moduleId,
+                    weight: 0.5 // Lower confidence for imports
+                });
+            }
+        }
+    }
+    
+    // Look for function calls
+    const functionCallPattern = /\b(\w+)\s*\(/g;
+    let match;
+    while ((match = functionCallPattern.exec(testBody)) !== null) {
+        const calledFunctionName = match[1];
+        
+        // Skip common testing functions and Python built-ins
+        if (['assertEqual', 'assertTrue', 'assertFalse', 'assertRaises', 'assertIn',
+             'assert', 'print', 'len', 'str', 'int', 'float', 'list', 'dict', 'set', 
+             'isinstance', 'type', 'self'].includes(calledFunctionName)) {
+            continue;
+        }
+        
+        // Create an ID for the called function
+        const functionId = this.codeParser.generateElementId('function', calledFunctionName, '');
+        
+        // Add to covered elements if not already added
+        if (!coveredIds.has(functionId)) {
+            coveredIds.add(functionId);
+            testCase.coveredElements.push({
+                targetId: functionId,
+                weight: 0.8 // High confidence that it's testing this function
+            });
+        }
+    }
+    
+    // Look for method calls on objects (obj.method())
+    const methodCallPattern = /(\w+)\.(\w+)\s*\(/g;
+    while ((match = methodCallPattern.exec(testBody)) !== null) {
+        const objectName = match[1];
+        const methodName = match[2];
+        
+        // Skip self and common assertion methods
+        if (objectName === 'self' || ['assertEqual', 'assertTrue', 'assertFalse', 
+            'assertRaises', 'assertIn', 'append', 'extend', 'insert', 'remove', 
+            'pop', 'clear', 'index', 'count', 'sort', 'reverse', 'copy'].includes(methodName)) {
+            continue;
+        }
+        
+        // Create an ID for the object class
+        const classId = this.codeParser.generateElementId('class', objectName, '');
+        
+        // Add class to covered elements if not already added
+        if (!coveredIds.has(classId)) {
+            coveredIds.add(classId);
+            testCase.coveredElements.push({
+                targetId: classId,
+                weight: 0.9 // Very high confidence it's testing this class
+            });
+        }
+        
+        // Create an ID for the method
+        const methodId = this.codeParser.generateElementId('method', methodName, '');
+        
+        // Add method to covered elements if not already added
+        if (!coveredIds.has(methodId)) {
+            coveredIds.add(methodId);
+            testCase.coveredElements.push({
+                targetId: methodId,
+                weight: 0.8 // High confidence it's testing this method
+            });
+        }
+    }
+    
+    // Look for assertions containing variable names, which might indicate covered code
+    const assertPattern = /assert\w*\(\s*\w+\.?([^(),\s]+)?\s*(?:,|\))/g;
+    while ((match = assertPattern.exec(testBody)) !== null) {
+        if (match[1]) {
+            const assertedName = match[1];
+            
+            // Create an ID for the possible function/variable being tested
+            const elementId = this.codeParser.generateElementId('function', assertedName, '');
+            
+            // Add to covered elements if not already added
+            if (!coveredIds.has(elementId)) {
+                coveredIds.add(elementId);
+                testCase.coveredElements.push({
+                    targetId: elementId,
+                    weight: 0.7 // Moderate confidence
+                });
+            }
+        }
+    }
+}
+
+/**
+ * Get indentation level of a line
+ */
+private getIndentation(line: string): number {
+    const match = line.match(/^(\s*)/);
+    return match ? match[1].length : 0;
+}
 
     /**
      * Parse .NET/MSTest style tests
@@ -608,14 +929,6 @@ export class TestParser {
     private identifyCoveredCodeJava(testBody: string, testCase: TestCase, imports: string[], packageName: string | null): void {
         // Simplified implementation - similar approach as general identifyCoveredCode
         this.identifyCoveredCode(testBody, testCase, imports);
-    }
-
-    /**
-     * Get indentation level of a line
-     */
-    private getIndentation(line: string): number {
-        const match = line.match(/^(\s*)/);
-        return match ? match[1].length : 0;
     }
 
     /**
