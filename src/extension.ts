@@ -210,6 +210,32 @@ function setupEventListeners(context: vscode.ExtensionContext) {
 }
 
 function createGraphVisualizationHtml(graph: any): string {
+    // First, ensure all referenced nodes exist
+    const referencedNodeIds = new Set<string>();
+    
+    // Collect all node IDs referenced in links
+    graph.links.forEach((link: any) => {
+        referencedNodeIds.add(link.source);
+        referencedNodeIds.add(link.target);
+    });
+    
+    // Get all existing node IDs
+    const existingNodeIds = new Set(graph.nodes.map((node: any) => node.id));
+    
+    // Find missing nodes
+    const missingNodeIds = [...referencedNodeIds].filter(id => !existingNodeIds.has(id));
+    
+    // Add placeholder nodes for missing references
+    missingNodeIds.forEach(id => {
+        graph.nodes.push({
+            id: id,
+            label: `Unknown (${id.split('_')[0]})`, // Extract prefix like "function" from the ID
+            type: "Unknown",
+            impact: 0.1, // Low impact for placeholder nodes
+            changed: false
+        });
+    });
+    
     return `
         <!DOCTYPE html>
         <html lang="en">
@@ -225,11 +251,43 @@ function createGraphVisualizationHtml(graph: any): string {
                 .link { stroke: #999; stroke-opacity: 0.6; }
                 .test-node { fill: #6baed6; }
                 .code-node { fill: #fd8d3c; }
+                .unknown-node { fill: #969696; } /* Gray for unknown nodes */
                 .changed-node { fill: #e31a1c; stroke: #b10026; stroke-width: 2px; }
                 .node text { font-size: 10px; }
+                .tooltip {
+                    position: absolute;
+                    text-align: center;
+                    padding: 8px;
+                    font: 12px sans-serif;
+                    background: rgba(0, 0, 0, 0.8);
+                    color: white;
+                    border: 0px;
+                    border-radius: 4px;
+                    pointer-events: none;
+                    opacity: 0;
+                    transition: opacity 0.3s;
+                }
+                .controls {
+                    position: absolute;
+                    top: 10px;
+                    left: 10px;
+                    background: rgba(255, 255, 255, 0.8);
+                    padding: 10px;
+                    border-radius: 5px;
+                }
             </style>
         </head>
         <body>
+            <div class="controls">
+                <button id="zoom-in">Zoom In</button>
+                <button id="zoom-out">Zoom Out</button>
+                <button id="reset-zoom">Reset</button>
+                <div>
+                    <input type="checkbox" id="show-changed-only" />
+                    <label for="show-changed-only">Show changed nodes only</label>
+                </div>
+            </div>
+            <div class="tooltip" id="tooltip"></div>
             <svg id="graph"></svg>
             <script>
                 // Graph visualization code
@@ -240,6 +298,21 @@ function createGraphVisualizationHtml(graph: any): string {
                 const width = window.innerWidth;
                 const height = window.innerHeight;
                 
+                // Add zoom behavior
+                const zoom = d3.zoom()
+                    .scaleExtent([0.1, 10])
+                    .on("zoom", (event) => {
+                        container.attr("transform", event.transform);
+                    });
+                
+                svg.call(zoom);
+                
+                // Create a container for the graph elements
+                const container = svg.append("g");
+                
+                // Tooltip setup
+                const tooltip = d3.select("#tooltip");
+                
                 // Create force simulation
                 const simulation = d3.forceSimulation(graph.nodes)
                     .force("link", d3.forceLink(graph.links).id(d => d.id).distance(100))
@@ -247,7 +320,7 @@ function createGraphVisualizationHtml(graph: any): string {
                     .force("center", d3.forceCenter(width / 2, height / 2));
                 
                 // Create links
-                const link = svg.append("g")
+                const link = container.append("g")
                     .selectAll("line")
                     .data(graph.links)
                     .enter().append("line")
@@ -255,22 +328,38 @@ function createGraphVisualizationHtml(graph: any): string {
                     .attr("stroke-width", d => Math.sqrt(d.weight || 1));
                 
                 // Create nodes
-                const node = svg.append("g")
+                const node = container.append("g")
                     .selectAll("g")
                     .data(graph.nodes)
                     .enter().append("g")
-                    .attr("class", "node")
                     .attr("class", d => {
                         let classes = "node";
                         if (d.type === "TestCase") classes += " test-node";
-                        else classes += " code-node";
+                        else if (d.type === "CodeElement") classes += " code-node";
+                        else classes += " unknown-node";
                         if (d.changed) classes += " changed-node";
                         return classes;
                     })
                     .call(d3.drag()
                         .on("start", dragstarted)
                         .on("drag", dragged)
-                        .on("end", dragended));
+                        .on("end", dragended))
+                    .on("mouseover", function(event, d) {
+                        tooltip.transition()
+                            .duration(200)
+                            .style("opacity", .9);
+                        tooltip.html(\`<strong>\${d.label || d.id}</strong><br/>
+                                        Type: \${d.type}<br/>
+                                        \${d.changed ? "Changed: Yes<br/>" : ""}
+                                        \${d.impact ? "Impact: " + (d.impact * 100).toFixed(0) + "%" : ""}\`)
+                            .style("left", (event.pageX + 10) + "px")
+                            .style("top", (event.pageY - 28) + "px");
+                    })
+                    .on("mouseout", function() {
+                        tooltip.transition()
+                            .duration(500)
+                            .style("opacity", 0);
+                    });
                 
                 // Add circles to nodes
                 node.append("circle")
@@ -311,6 +400,52 @@ function createGraphVisualizationHtml(graph: any): string {
                     d.fx = null;
                     d.fy = null;
                 }
+                
+                // Controls
+                document.getElementById("zoom-in").addEventListener("click", () => {
+                    svg.transition().call(zoom.scaleBy, 1.5);
+                });
+                
+                document.getElementById("zoom-out").addEventListener("click", () => {
+                    svg.transition().call(zoom.scaleBy, 0.75);
+                });
+                
+                document.getElementById("reset-zoom").addEventListener("click", () => {
+                    svg.transition().call(zoom.transform, d3.zoomIdentity);
+                });
+                
+                document.getElementById("show-changed-only").addEventListener("change", function() {
+                    if (this.checked) {
+                        // Show only changed nodes and their direct connections
+                        const changedNodeIds = new Set(graph.nodes.filter(n => n.changed).map(n => n.id));
+                        const connectedNodeIds = new Set(changedNodeIds);
+                        
+                        // Add nodes directly connected to changed nodes
+                        graph.links.forEach(link => {
+                            if (changedNodeIds.has(link.source.id || link.source)) {
+                                connectedNodeIds.add(link.target.id || link.target);
+                            } else if (changedNodeIds.has(link.target.id || link.target)) {
+                                connectedNodeIds.add(link.source.id || link.source);
+                            }
+                        });
+                        
+                        // Filter nodes
+                        node.style("visibility", d => 
+                            connectedNodeIds.has(d.id) ? "visible" : "hidden");
+                        
+                        // Filter links
+                        link.style("visibility", d => {
+                            const sourceId = d.source.id || d.source;
+                            const targetId = d.target.id || d.target;
+                            return connectedNodeIds.has(sourceId) && connectedNodeIds.has(targetId) 
+                                ? "visible" : "hidden";
+                        });
+                    } else {
+                        // Show all nodes and links
+                        node.style("visibility", "visible");
+                        link.style("visibility", "visible");
+                    }
+                });
             </script>
         </body>
         </html>

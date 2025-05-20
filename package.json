@@ -80,7 +80,12 @@
       "properties": {
         "sikg.logLevel": {
           "type": "string",
-          "enum": ["debug", "info", "warn", "error"],
+          "enum": [
+            "debug",
+            "info",
+            "warn",
+            "error"
+          ],
           "default": "info",
           "description": "Log level for the extension"
         },
@@ -94,7 +99,16 @@
           "items": {
             "type": "string"
           },
-          "default": ["ts", "js", "tsx", "jsx", "java", "py", "cs", "go"],
+          "default": [
+            "ts",
+            "js",
+            "tsx",
+            "jsx",
+            "java",
+            "py",
+            "cs",
+            "go"
+          ],
           "description": "File extensions to consider as code files"
         },
         "sikg.testFilePatterns": {
@@ -103,10 +117,18 @@
             "type": "string"
           },
           "default": [
-            "**/*.test.{ts,js,tsx,jsx}",
-            "**/*.spec.{ts,js,tsx,jsx}",
-            "**/*Test.{java,kt}",
-            "**/*Tests.{cs,fs}",
+            "**/*.test.ts",
+            "**/*.test.js",
+            "**/*.test.tsx",
+            "**/*.test.jsx",
+            "**/*.spec.ts",
+            "**/*.spec.js",
+            "**/*.spec.tsx",
+            "**/*.spec.jsx",
+            "**/*Test.java",
+            "**/*Test.kt",
+            "**/*Tests.cs",
+            "**/*Tests.fs",
             "**/*_test.go",
             "**/test_*.py",
             "**/*_test.py"
@@ -170,6 +192,7 @@
     "typescript": "^5.0.4"
   },
   "dependencies": {
-    "crypto": "^1.0.1"
+    "crypto": "^1.0.1",
+    "d3": "^7.9.0"
   }
 }
