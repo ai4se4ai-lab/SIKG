@@ -1,75 +1,470 @@
-// Code Parser - Parses source code and extracts code elements and relationships
+// CodeParser.ts - Enhanced with Abstract Syntax Tree Processing
+// This version uses AST-based parsing for more accurate code analysis
 
 import * as path from 'path';
 import * as crypto from 'crypto';
+import * as child_process from 'child_process';
+import * as fs from 'fs';
+import * as os from 'os';
 import { CodeElement } from './GraphTypes';
 import { Logger } from '../utils/Logger';
 
+/**
+ * Enhanced CodeParser that uses AST-based parsing for more accurate code analysis
+ */
 export class CodeParser {
+    private tempDir: string;
+
+    constructor() {
+        // Create a temporary directory for AST processing scripts
+        this.tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sikg-ast-'));
+        this.initializeAstProcessors();
+    }
+
+    /**
+     * Initialize AST processor scripts
+     */
+    private initializeAstProcessors(): void {
+        // Write Python AST parser script to temporary directory
+        const pythonAstParserPath = path.join(this.tempDir, 'python_ast_parser.py');
+        fs.writeFileSync(pythonAstParserPath, this.getPythonAstParserScript());
+    }
+
     /**
      * Parse a code file and extract code elements and relationships
      */
     public async parseCodeFile(content: string, filePath: string): Promise<CodeElement[]> {
         Logger.debug(`Parsing code file: ${filePath}`);
-        const elements: CodeElement[] = [];
         
         try {
             // Determine the language based on file extension
             const extension = path.extname(filePath).toLowerCase();
             
             switch (extension) {
-                // case '.ts':
-                // case '.tsx':
-                //     return this.parseTypeScript(content, filePath);
-                // case '.js':
-                // case '.jsx':
-                //     return this.parseJavaScript(content, filePath);
-                // case '.java':
-                //     return this.parseJava(content, filePath);
                 case '.py':
-                    return this.parsePython(content, filePath);
-                // case '.cs':
-                //     return this.parseCSharp(content, filePath);
-                // case '.go':
-                //     return this.parseGo(content, filePath);
+                    return this.parsePythonWithAst(content, filePath);
                 default:
-                    // Generic parser that tries to identify functions, classes, etc.
+                    // Fall back to the generic parser for unsupported languages
+                    Logger.debug(`Using generic parser for ${extension} file: ${filePath}`);
                     return this.parseGeneric(content, filePath);
             }
         } catch (error) {
             Logger.error(`Error parsing code file ${filePath}:`, error);
-            return [];
+            // Fallback to generic parser if AST parsing fails
+            Logger.debug(`Falling back to generic parser for ${filePath}`);
+            return this.parseGeneric(content, filePath);
         }
     }
 
     /**
-     * Parse TypeScript code
+     * Parse Python code using AST-based analysis
      */
-    private parseTypeScript(content: string, filePath: string): CodeElement[] {
-        return this.parseGeneric(content, filePath); // Replace with actual TypeScript parsing
+    private async parsePythonWithAst(content: string, filePath: string): Promise<CodeElement[]> {
+        Logger.debug(`Parsing Python file with AST: ${filePath}`);
+        
+        try {
+            // Write the content to a temporary file for processing
+            const tempFilePath = path.join(this.tempDir, `temp_${Date.now()}.py`);
+            fs.writeFileSync(tempFilePath, content);
+            
+            // Execute the Python AST parser on the temporary file
+            const pythonAstParserPath = path.join(this.tempDir, 'python_ast_parser.py');
+            const command = `python "${pythonAstParserPath}" "${tempFilePath}"`;
+            
+            Logger.debug(`Executing AST parser command: ${command}`);
+            const output = child_process.execSync(command, { encoding: 'utf8' });
+            
+            // Clean up the temporary file
+            fs.unlinkSync(tempFilePath);
+            
+            // Parse the JSON output from the AST parser
+            const astData = JSON.parse(output);
+            
+            // Convert the AST data to CodeElements
+            return this.convertAstToCodeElements(astData, filePath);
+        } catch (error) {
+            Logger.error(`Error parsing Python file with AST ${filePath}:`, error);
+            // Fallback to the regex-based parser
+            Logger.debug(`Falling back to regex-based parser for ${filePath}`);
+            return this.parsePython(content, filePath);
+        }
     }
 
     /**
-     * Parse JavaScript code
+     * Convert AST data to CodeElements
      */
-    private parseJavaScript(content: string, filePath: string): CodeElement[] {
-        return this.parseGeneric(content, filePath); // Replace with actual JavaScript parsing
+    private convertAstToCodeElements(astData: any, filePath: string): CodeElement[] {
+        const elements: CodeElement[] = [];
+        const idMap = new Map<string, string>();
+        
+        // Process module
+        const moduleId = this.generateElementId('module', path.basename(filePath, '.py'), filePath);
+        elements.push({
+            id: moduleId,
+            name: path.basename(filePath, '.py'),
+            kind: 'module',
+            filePath,
+            loc: {
+                start: { line: 1, column: 0 },
+                end: { line: astData.end_line, column: 0 }
+            },
+            relations: []
+        });
+        
+        // Process imports
+        for (const importItem of astData.imports) {
+            const importedModuleName = importItem.name;
+            const importId = this.generateElementId('module', importedModuleName, importedModuleName);
+            
+            // Add import relationship to the module
+            elements[0].relations.push({
+                targetId: importId,
+                type: 'IMPORTS',
+                weight: 0.7
+            });
+            
+            // Store the name to ID mapping for imported names
+            for (const name of importItem.imported_names || []) {
+                idMap.set(name, this.generateElementId('function', name, importedModuleName));
+            }
+        }
+        
+        // Process classes
+        for (const classData of astData.classes) {
+            const classId = this.generateElementId('class', classData.name, filePath);
+            
+            // Create the class element
+            const classElement: CodeElement = {
+                id: classId,
+                name: classData.name,
+                kind: 'class',
+                filePath,
+                loc: {
+                    start: { line: classData.start_line, column: classData.start_col },
+                    end: { line: classData.end_line, column: classData.end_col }
+                },
+                relations: [
+                    // Class belongs to module
+                    {
+                        targetId: moduleId,
+                        type: 'BELONGS_TO',
+                        weight: 1.0
+                    }
+                ]
+            };
+            
+            // Add inheritance relationships
+            for (const baseClass of classData.bases) {
+                const baseClassId = idMap.get(baseClass) || this.generateElementId('class', baseClass, filePath);
+                classElement.relations.push({
+                    targetId: baseClassId,
+                    type: 'INHERITS_FROM',
+                    weight: 1.0
+                });
+            }
+            
+            elements.push(classElement);
+            
+            // Process methods
+            for (const methodData of classData.methods) {
+                const methodId = this.generateElementId('method', methodData.name, filePath);
+                
+                // Create the method element
+                const methodElement: CodeElement = {
+                    id: methodId,
+                    name: methodData.name,
+                    kind: 'method',
+                    filePath,
+                    signature: `${methodData.name}(${methodData.params.join(', ')})`,
+                    loc: {
+                        start: { line: methodData.start_line, column: methodData.start_col },
+                        end: { line: methodData.end_line, column: methodData.end_col }
+                    },
+                    relations: [
+                        // Method belongs to class
+                        {
+                            targetId: classId,
+                            type: 'BELONGS_TO',
+                            weight: 1.0
+                        }
+                    ]
+                };
+                
+                // Add method calls
+                for (const calledFunc of methodData.calls) {
+                    const isMethod = calledFunc.includes('.');
+                    let callTargetId: string;
+                    
+                    if (isMethod) {
+                        // This is a method call like obj.method()
+                        const [obj, method] = calledFunc.split('.');
+                        
+                        // Add USES relationship for the object
+                        const objId = idMap.get(obj) || this.generateElementId('class', obj, filePath);
+                        methodElement.relations.push({
+                            targetId: objId,
+                            type: 'USES',
+                            weight: 0.6
+                        });
+                        
+                        // Add CALLS relationship for the method
+                        callTargetId = this.generateElementId('method', method, filePath);
+                    } else {
+                        // This is a regular function call
+                        callTargetId = idMap.get(calledFunc) || this.generateElementId('function', calledFunc, filePath);
+                    }
+                    
+                    methodElement.relations.push({
+                        targetId: callTargetId,
+                        type: 'CALLS',
+                        weight: 0.8
+                    });
+                }
+                
+                elements.push(methodElement);
+            }
+        }
+        
+        // Process functions
+        for (const funcData of astData.functions) {
+            const funcId = this.generateElementId('function', funcData.name, filePath);
+            
+            // Create the function element
+            const funcElement: CodeElement = {
+                id: funcId,
+                name: funcData.name,
+                kind: 'function',
+                filePath,
+                signature: `${funcData.name}(${funcData.params.join(', ')})`,
+                loc: {
+                    start: { line: funcData.start_line, column: funcData.start_col },
+                    end: { line: funcData.end_line, column: funcData.end_col }
+                },
+                relations: [
+                    // Function belongs to module
+                    {
+                        targetId: moduleId,
+                        type: 'BELONGS_TO',
+                        weight: 1.0
+                    }
+                ]
+            };
+            
+            // Add function calls
+            for (const calledFunc of funcData.calls) {
+                const isMethod = calledFunc.includes('.');
+                let callTargetId: string;
+                
+                if (isMethod) {
+                    // This is a method call like obj.method()
+                    const [obj, method] = calledFunc.split('.');
+                    
+                    // Add USES relationship for the object
+                    const objId = idMap.get(obj) || this.generateElementId('class', obj, filePath);
+                    funcElement.relations.push({
+                        targetId: objId,
+                        type: 'USES',
+                        weight: 0.6
+                    });
+                    
+                    // Add CALLS relationship for the method
+                    callTargetId = this.generateElementId('method', method, filePath);
+                } else {
+                    // This is a regular function call
+                    callTargetId = idMap.get(calledFunc) || this.generateElementId('function', calledFunc, filePath);
+                }
+                
+                funcElement.relations.push({
+                    targetId: callTargetId,
+                    type: 'CALLS',
+                    weight: 0.8
+                });
+            }
+            
+            elements.push(funcElement);
+        }
+        
+        return elements;
     }
 
     /**
-     * Parse Java code
+     * Generate Python AST parser script content
      */
-    private parseJava(content: string, filePath: string): CodeElement[] {
-        return this.parseGeneric(content, filePath); // Replace with actual Java parsing
+    private getPythonAstParserScript(): string {
+        return `#!/usr/bin/env python
+import ast
+import json
+import sys
+
+class AstVisitor(ast.NodeVisitor):
+    def __init__(self):
+        self.classes = []
+        self.functions = []
+        self.imports = []
+        self.current_class = None
+        self.end_line = 0
+    
+    def visit_ClassDef(self, node):
+        class_info = {
+            'name': node.name,
+            'start_line': node.lineno,
+            'start_col': node.col_offset,
+            'end_line': self.get_end_line(node),
+            'end_col': 0,
+            'bases': [self.get_name(base) for base in node.bases],
+            'methods': []
+        }
+        
+        old_class = self.current_class
+        self.current_class = class_info
+        
+        # Visit all child nodes
+        for child in node.body:
+            self.visit(child)
+        
+        self.current_class = old_class
+        
+        if old_class is None:
+            self.classes.append(class_info)
+        self.end_line = max(self.end_line, class_info['end_line'])
+    
+    def visit_FunctionDef(self, node):
+        func_info = {
+            'name': node.name,
+            'start_line': node.lineno,
+            'start_col': node.col_offset,
+            'end_line': self.get_end_line(node),
+            'end_col': 0,
+            'params': self.get_function_params(node),
+            'calls': self.extract_function_calls(node)
+        }
+        
+        if self.current_class:
+            self.current_class['methods'].append(func_info)
+        else:
+            self.functions.append(func_info)
+        
+        self.end_line = max(self.end_line, func_info['end_line'])
+    
+    def visit_Import(self, node):
+        for name in node.names:
+            self.imports.append({
+                'name': name.name,
+                'asname': name.asname,
+                'imported_names': []
+            })
+    
+    def visit_ImportFrom(self, node):
+        imported_names = [name.name for name in node.names]
+        self.imports.append({
+            'name': node.module or '',
+            'level': node.level,
+            'imported_names': imported_names
+        })
+    
+    def get_function_params(self, node):
+        params = []
+        for arg in node.args.args:
+            params.append(arg.arg)
+        if node.args.vararg:
+            params.append(f"*{node.args.vararg.arg}")
+        if node.args.kwarg:
+            params.append(f"**{node.args.kwarg.arg}")
+        return params
+    
+    def extract_function_calls(self, node):
+        calls = []
+        
+        for child in ast.walk(node):
+            if isinstance(child, ast.Call):
+                if isinstance(child.func, ast.Name):
+                    # Simple function call: func()
+                    calls.append(child.func.id)
+                elif isinstance(child.func, ast.Attribute):
+                    # Method call: obj.method()
+                    if isinstance(child.func.value, ast.Name):
+                        calls.append(f"{child.func.value.id}.{child.func.attr}")
+        
+        return calls
+    
+    def get_end_line(self, node):
+        # Try to get the end line number from the node
+        if hasattr(node, 'end_lineno') and node.end_lineno is not None:
+            return node.end_lineno
+        
+        # If end_lineno is not available, find the maximum line number in child nodes
+        max_line = node.lineno
+        for child in ast.iter_child_nodes(node):
+            if hasattr(child, 'lineno'):
+                child_end = self.get_end_line(child)
+                max_line = max(max_line, child_end)
+        
+        return max_line
+    
+    def get_name(self, node):
+        if isinstance(node, ast.Name):
+            return node.id
+        elif isinstance(node, ast.Attribute):
+            return f"{self.get_name(node.value)}.{node.attr}"
+        return "unknown"
+
+def parse_python_file(file_path):
+    with open(file_path, 'r', encoding='utf-8') as f:
+        source = f.read()
+    
+    try:
+        tree = ast.parse(source)
+        visitor = AstVisitor()
+        visitor.visit(tree)
+        
+        return {
+            'classes': visitor.classes,
+            'functions': visitor.functions,
+            'imports': visitor.imports,
+            'end_line': visitor.end_line or len(source.splitlines())
+        }
+    except SyntaxError as e:
+        return {
+            'error': f"Syntax error: {str(e)}",
+            'classes': [],
+            'functions': [],
+            'imports': [],
+            'end_line': len(source.splitlines())
+        }
+
+if __name__ == '__main__':
+    if len(sys.argv) != 2:
+        print("Usage: python_ast_parser.py <python_file>")
+        sys.exit(1)
+    
+    result = parse_python_file(sys.argv[1])
+    print(json.dumps(result))
+`;
     }
 
     /**
-     * Parse Python code
+     * Clean up resources used by the parser
      */
-    // Updated parsePython method for CodeParser.ts
+    public dispose(): void {
+        try {
+            // Delete the temporary directory and its contents
+            if (fs.existsSync(this.tempDir)) {
+                const files = fs.readdirSync(this.tempDir);
+                for (const file of files) {
+                    fs.unlinkSync(path.join(this.tempDir, file));
+                }
+                fs.rmdirSync(this.tempDir);
+            }
+        } catch (error) {
+            Logger.error('Error cleaning up CodeParser resources:', error);
+        }
+    }
 
+    /**
+     * Parse Python code (legacy regex-based implementation, used as fallback)
+     */
     private parsePython(content: string, filePath: string): CodeElement[] {
-        Logger.debug(`Parsing Python file: ${filePath}`);
+        Logger.debug(`Falling back to regex-based parsing for Python file: ${filePath}`);
         const elements: CodeElement[] = [];
         const lines = content.split('\n');
         
@@ -91,7 +486,7 @@ export class CodeParser {
                 const line = lines[lineIndex];
                 const indentation = this.getIndentation(line);
                 
-                // Clean up scope stack based on indentation
+                // Maintain the class stack based on indentation
                 while (scopeStack.length > 0 && scopeStack[scopeStack.length - 1].indentation >= indentation) {
                     scopeStack.pop();
                 }
@@ -361,24 +756,11 @@ export class CodeParser {
     }
 
     /**
-     * Parse C# code
-     */
-    private parseCSharp(content: string, filePath: string): CodeElement[] {
-        return this.parseGeneric(content, filePath); // Replace with actual C# parsing
-    }
-
-    /**
-     * Parse Go code
-     */
-    private parseGo(content: string, filePath: string): CodeElement[] {
-        return this.parseGeneric(content, filePath); // Replace with actual Go parsing
-    }
-
-    /**
      * Generic parser that tries to identify code elements using regex patterns
-     * This is a simplified placeholder - a real implementation would use language-specific AST parsers
+     * This serves as a fallback for unsupported languages
      */
     private parseGeneric(content: string, filePath: string): CodeElement[] {
+        Logger.debug(`Using generic parser for ${filePath}`);
         const elements: CodeElement[] = [];
         const lines = content.split('\n');
         
@@ -387,7 +769,6 @@ export class CodeParser {
         
         try {
             // Simplified patterns for different code constructs
-            // In a real implementation, use AST parsing for accurate results
             
             // Pattern for classes
             const classPattern = /\b(?:class|interface|enum)\s+(\w+)(?:<.*>)?(?:\s+extends\s+(\w+))?(?:\s+implements\s+([\w,\s]+))?/g;
@@ -408,7 +789,6 @@ export class CodeParser {
                 while ((classMatch = classPatternCopy.exec(line)) !== null) {
                     const className = classMatch[1];
                     const extendsClass = classMatch[2];
-                    const implementsInterfaces = classMatch[3];
                     
                     // Create a unique ID for the class
                     const classId = this.generateElementId('class', className, filePath);
