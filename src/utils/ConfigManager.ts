@@ -46,7 +46,7 @@ export class ConfigManager {
      */
     public getCodeFileExtensions(): string[] {
         return vscode.workspace.getConfiguration('sikg').get<string[]>('codeFileExtensions', [
-            'ts', 'js', 'tsx', 'jsx', 'java', 'py', 'cs', 'go'
+            'py'
         ]);
     }
 
@@ -55,13 +55,10 @@ export class ConfigManager {
      */
     public getTestFilePatterns(): string[] {
         return vscode.workspace.getConfiguration('sikg').get<string[]>('testFilePatterns', [
-            '**/*.test.{ts,js,tsx,jsx}',
-            '**/*.spec.{ts,js,tsx,jsx}',
-            '**/*Test.{java,kt}',
-            '**/*Tests.{cs,fs}',
-            '**/*_test.go',
             '**/test_*.py',
-            '**/*_test.py'
+            '**/*_test.py',
+            '**/tests.py',
+            '**/test*.py'
         ]);
     }
 

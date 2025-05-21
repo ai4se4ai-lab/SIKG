@@ -178,51 +178,68 @@ export class ChangeAnalyzer {
     /**
      * Classify the type of change based on before and after code
      */
-    private async classifyChangeType(
-        beforeCode: string,
-        afterCode: string,
-        nodeId: string
-    ): Promise<SemanticChangeInfo['semanticType']> {
-        // Get the node and its properties
-        const node = this.sikgManager.getNode(nodeId);
+    // In src/sikg/ChangeAnalyzer.ts
+// Modify the classifyChangeType method to focus on Python-specific patterns:
+
+private async classifyChangeType(
+    beforeCode: string,
+    afterCode: string,
+    nodeId: string
+): Promise<SemanticChangeInfo['semanticType']> {
+    // Get the node and its properties
+    const node = this.sikgManager.getNode(nodeId);
+    
+    if (!node) {
+        return 'UNKNOWN';
+    }
+    
+    // Simple heuristics for Python code
+    const lowerBody = afterCode.toLowerCase();
+    
+    // Check for bug fix keywords
+    if (this.containsKeywords(lowerBody, ['fix', 'bug', 'issue', 'problem', 'error', 'exception', 'crash'])) {
+        return 'BUG_FIX';
+    }
+    
+    // Check for feature addition
+    if (this.containsKeywords(lowerBody, ['feature', 'implement', 'add', 'new']) && 
+        lowerBody.length > beforeCode.length * 1.5) {
+        return 'FEATURE_ADDITION';
+    }
+    
+    // Check for signature refactoring (function signature changes)
+    const beforeSignature = this.extractPythonSignature(beforeCode);
+    const afterSignature = this.extractPythonSignature(afterCode);
+    
+    if (beforeSignature && afterSignature && beforeSignature !== afterSignature) {
+        return 'REFACTORING_SIGNATURE';
+    }
+    
+    // Check for performance optimization
+    if (this.containsKeywords(lowerBody, ['performance', 'optimize', 'speed', 'fast', 'efficient'])) {
+        return 'PERFORMANCE_OPT';
+    }
+    
+    // Check for dependency updates
+    if (this.containsKeywords(lowerBody, ['import', 'dependency', 'version', 'update', 'upgrade', 'library', 'pip'])) {
+        return 'DEPENDENCY_UPDATE';
+    }
+    
+    // Default to refactoring of internal logic if none of the above
+    return 'REFACTORING_LOGIC';
+}
+
+    // Add a Python-specific signature extraction method
+    private extractPythonSignature(code: string): string | null {
+        // Simple regex to detect Python function signatures
+        const signatureRegex = /def\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(([^)]*)\)/g;
+        const match = signatureRegex.exec(code);
         
-        if (!node) {
-            return 'UNKNOWN';
+        if (match && match.length > 0) {
+            return match[0];
         }
         
-        // Simple heuristics for now - this would be a good place to use ML in the future
-        
-        // Check for bug fix keywords
-        if (this.containsKeywords(afterCode, ['fix', 'bug', 'issue', 'problem', 'error', 'exception', 'crash'])) {
-            return 'BUG_FIX';
-        }
-        
-        // Check for feature addition
-        if (this.containsKeywords(afterCode, ['feature', 'implement', 'add', 'new']) && 
-            afterCode.length > beforeCode.length * 1.5) {
-            return 'FEATURE_ADDITION';
-        }
-        
-        // Check for signature refactoring (method/function signature changes)
-        const beforeSignature = this.extractSignature(beforeCode);
-        const afterSignature = this.extractSignature(afterCode);
-        
-        if (beforeSignature && afterSignature && beforeSignature !== afterSignature) {
-            return 'REFACTORING_SIGNATURE';
-        }
-        
-        // Check for performance optimization
-        if (this.containsKeywords(afterCode, ['performance', 'optimize', 'speed', 'fast', 'efficient'])) {
-            return 'PERFORMANCE_OPT';
-        }
-        
-        // Check for dependency updates
-        if (this.containsKeywords(afterCode, ['dependency', 'version', 'update', 'upgrade', 'library'])) {
-            return 'DEPENDENCY_UPDATE';
-        }
-        
-        // Default to refactoring of internal logic if none of the above
-        return 'REFACTORING_LOGIC';
+        return null;
     }
 
     /**
