@@ -41,6 +41,16 @@
         "command": "sikg.showResults",
         "title": "SIKG: Show Results",
         "icon": "$(list-flat)"
+      },
+      {
+        "command": "sikg.diagnoseLangaugeIssues",
+        "title": "SIKG: Diagnose Language Issues",
+        "icon": "$(search)"
+      },
+      {
+        "command": "sikg.fixLanguageIssues",
+        "title": "SIKG: Fix Language Issues",
+        "icon": "$(tools)"
       }
     ],
     "viewsContainers": {
@@ -57,7 +67,8 @@
         {
           "id": "sikgView",
           "name": "Test Impact Analysis",
-          "type": "webview"
+          "type": "webview",
+          "icon": "$(test-view-icon)"
         }
       ]
     },
@@ -72,6 +83,16 @@
           "command": "sikg.runPrioritizedTests",
           "when": "view == sikgView",
           "group": "navigation"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "sikg.diagnoseLangaugeIssues",
+          "when": "true"
+        },
+        {
+          "command": "sikg.fixLanguageIssues",
+          "when": "true"
         }
       ]
     },
@@ -100,16 +121,16 @@
             "type": "string"
           },
           "default": [
-            "ts",
-            "js",
-            "tsx",
-            "jsx",
-            "java",
             "py",
+            "js",
+            "jsx",
+            "ts",
+            "tsx",
+            "java",
             "cs",
             "go"
           ],
-          "description": "File extensions to consider as code files"
+          "description": "File extensions to consider as code files (without the dot)"
         },
         "sikg.testFilePatterns": {
           "type": "array",
@@ -117,21 +138,25 @@
             "type": "string"
           },
           "default": [
-            "**/*.test.ts",
-            "**/*.test.js",
-            "**/*.test.tsx",
-            "**/*.test.jsx",
-            "**/*.spec.ts",
-            "**/*.spec.js",
-            "**/*.spec.tsx",
-            "**/*.spec.jsx",
-            "**/*Test.java",
-            "**/*Test.kt",
-            "**/*Tests.cs",
-            "**/*Tests.fs",
-            "**/*_test.go",
             "**/test_*.py",
-            "**/*_test.py"
+            "**/*_test.py",
+            "**/tests.py",
+            "**/test*.py",
+            "**/*.test.js",
+            "**/*.test.ts",
+            "**/*.test.jsx",
+            "**/*.test.tsx",
+            "**/*.spec.js",
+            "**/*.spec.ts",
+            "**/*.spec.jsx",
+            "**/*.spec.tsx",
+            "**/*Test.java",
+            "**/*Tests.java",
+            "**/Test*.java",
+            "**/*Test.cs",
+            "**/*Tests.cs",
+            "**/Test*.cs",
+            "**/*_test.go"
           ],
           "description": "Glob patterns to identify test files"
         },
@@ -145,29 +170,67 @@
             "**/dist/**",
             "**/build/**",
             "**/coverage/**",
-            "**/.git/**"
+            "**/.git/**",
+            "**/venv/**",
+            "**/env/**",
+            "**/__pycache__/**",
+            "**/target/**",
+            "**/bin/**",
+            "**/obj/**",
+            "**/vendor/**"
           ],
           "description": "Patterns to exclude from analysis"
         },
         "sikg.maxTraversalDepth": {
           "type": "number",
           "default": 5,
+          "minimum": 1,
+          "maximum": 20,
           "description": "Maximum traversal depth for impact propagation"
         },
         "sikg.minImpactThreshold": {
           "type": "number",
           "default": 0.05,
+          "minimum": 0,
+          "maximum": 1,
           "description": "Minimum impact threshold to continue propagation (0-1)"
         },
         "sikg.highImpactThreshold": {
           "type": "number",
           "default": 0.7,
+          "minimum": 0,
+          "maximum": 1,
           "description": "Threshold for high impact tests (0-1)"
         },
         "sikg.lowImpactThreshold": {
           "type": "number",
           "default": 0.3,
+          "minimum": 0,
+          "maximum": 1,
           "description": "Threshold for low impact tests (0-1)"
+        },
+        "sikg.supportedLanguages": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "python",
+              "javascript",
+              "typescript",
+              "java",
+              "csharp",
+              "go"
+            ]
+          },
+          "default": [
+            "python",
+            "javascript",
+            "typescript",
+            "java",
+            "csharp",
+            "go"
+          ],
+          "description": "Programming languages supported by SIKG"
         }
       }
     }
