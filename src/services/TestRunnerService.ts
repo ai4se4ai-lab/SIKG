@@ -53,24 +53,11 @@ export class TestRunnerService {
                 const fileExt = path.extname(filePath).toLowerCase();
                 let testResults: TestResult[];
                 
-                if (fileExt === '.ts' || fileExt === '.js' || fileExt === '.tsx' || fileExt === '.jsx') {
+                if (fileExt === '.py') {
                     // JavaScript/TypeScript tests (Jest, Mocha, etc.)
-                    testResults = await this.runJsTests(filePath, tests, testImpacts);
-                } else if (fileExt === '.java') {
-                    // Java tests (JUnit, etc.)
-                    testResults = await this.runJavaTests(filePath, tests, testImpacts);
-                } else if (fileExt === '.py') {
-                    // Python tests (pytest, unittest, etc.)
                     testResults = await this.runPythonTests(filePath, tests, testImpacts);
-                } else if (fileExt === '.cs') {
-                    // C# tests (NUnit, MSTest, etc.)
-                    testResults = await this.runCSharpTests(filePath, tests, testImpacts);
-                } else if (fileExt === '.go') {
-                    // Go tests
-                    testResults = await this.runGoTests(filePath, tests, testImpacts);
                 } else {
-                    // Generic approach using VS Code Test API
-                    testResults = await this.runGenericTests(filePath, tests, testImpacts);
+                    continue;
                 }
                 
                 allResults.push(...testResults);
@@ -104,91 +91,125 @@ export class TestRunnerService {
         return null;
     }
 
-    /**
-     * Run JavaScript/TypeScript tests
-     */
-    private async runJsTests(
-        filePath: string,
-        tests: { testId: string; testName: string }[],
-        testImpacts: Record<string, TestImpact>
-    ): Promise<TestResult[]> {
-        // Simplified implementation - in a real extension, run actual tests
-        // This would use the VS Code Test API or spawn a process
-        
-        Logger.info(`Running JS tests in ${filePath}`);
-        
-        // Simulate test execution
-        const results: TestResult[] = [];
-        
-        for (const test of tests) {
-            // Simulate success/failure based on impact score
-            // In a real implementation, actually run the test
-            const predictedImpact = testImpacts[test.testId]?.impactScore || 0;
-            const changedNodeIds = testImpacts[test.testId]?.contributingChanges.map(c => c.nodeId) || [];
-            
-            // Higher impact scores more likely to fail (for simulation only)
-            const passProbability = 1 - Math.min(0.8, predictedImpact);
-            const passed = Math.random() > passProbability;
-            
-            results.push({
-                testId: test.testId,
-                status: passed ? 'passed' : 'failed',
-                executionTime: Math.random() * 1000 + 100, // Random execution time for simulation
-                predictedImpact,
-                changedNodeIds,
-                timestamp: new Date().toISOString()
-            });
-        }
-        
-        return results;
-    }
 
     /**
-     * Run Java tests
-     */
-    private async runJavaTests(
-        filePath: string,
-        tests: { testId: string; testName: string }[],
-        testImpacts: Record<string, TestImpact>
-    ): Promise<TestResult[]> {
-        // Similar approach as JS tests, but for Java
-        return this.simulateTestResults(tests, testImpacts);
-    }
-
-    /**
-     * Run Python tests
+     * Run Python tests using pytest or unittest
      */
     private async runPythonTests(
         filePath: string,
         tests: { testId: string; testName: string }[],
         testImpacts: Record<string, TestImpact>
     ): Promise<TestResult[]> {
-        // Similar approach as JS tests, but for Python
-        return this.simulateTestResults(tests, testImpacts);
+        Logger.info(`Running Python tests in ${filePath}`);
+        
+        try {
+            // Determine if we should use pytest or unittest
+            const isPytest = filePath.includes('test_') || filePath.includes('_test');
+            const content = fs.readFileSync(filePath, 'utf8');
+            const isUnittest = content.includes('import unittest') || content.includes('unittest.TestCase');
+            
+            // Prepare the results array
+            const results: TestResult[] = [];
+            
+            // Handle actual test execution - for a real extension, you would run the actual tests
+            // Here we're simulating execution for demonstration purposes
+            
+            for (const test of tests) {
+                // Get the test name in the expected format (TestClass.test_method or test_function)
+                const testName = test.testName;
+                const predictedImpact = testImpacts[test.testId]?.impactScore || 0;
+                const changedNodeIds = testImpacts[test.testId]?.contributingChanges.map(c => c.nodeId) || [];
+                
+                // Execute the test (simulated)
+                // In a real implementation, you would use child_process.exec to run pytest or unittest
+                // For example: pytest file::TestClass::test_method -v
+                
+                // Create a terminal command (though we won't execute it in this demonstration)
+                let command = '';
+                if (isPytest) {
+                    command = `pytest ${filePath}::${testName} -v`;
+                } else if (isUnittest) {
+                    // Check if testName includes the class name
+                    if (testName.includes('.')) {
+                        const [className, methodName] = testName.split('.');
+                        command = `python -m unittest ${filePath.replace(/\.py$/, '')}.${className}.${methodName}`;
+                    } else {
+                        command = `python -m unittest ${filePath.replace(/\.py$/, '')}.${testName}`;
+                    }
+                } else {
+                    command = `python ${filePath} ${testName}`;
+                }
+                
+                Logger.debug(`Test command (simulated): ${command}`);
+                
+                // Simulate success/failure based on impact score
+                // In a real implementation, you would parse the actual test results
+                const passProbability = 1 - Math.min(0.8, predictedImpact);
+                const passed = Math.random() > passProbability;
+                
+                // Simulate execution time (random value for demonstration)
+                const executionTime = Math.random() * 1000 + 100;
+                
+                results.push({
+                    testId: test.testId,
+                    status: passed ? 'passed' : 'failed',
+                    executionTime,
+                    predictedImpact,
+                    changedNodeIds,
+                    timestamp: new Date().toISOString()
+                });
+            }
+            
+            // In a real implementation, you would parse the output from the test runner
+            // and create TestResult objects based on the actual results
+            
+            return results;
+            
+        } catch (error) {
+            Logger.error(`Error running Python tests in ${filePath}:`, error);
+            
+            // Return failed results
+            return tests.map(test => ({
+                testId: test.testId,
+                status: 'failed' as const,
+                executionTime: 0,
+                predictedImpact: testImpacts[test.testId]?.impactScore,
+                changedNodeIds: testImpacts[test.testId]?.contributingChanges.map(c => c.nodeId),
+                errorMessage: `Failed to run test: ${error instanceof Error ? error.message : String(error)}`,
+                timestamp: new Date().toISOString()
+            }));
+        }
     }
 
-    /**
-     * Run C# tests
-     */
-    private async runCSharpTests(
-        filePath: string,
-        tests: { testId: string; testName: string }[],
-        testImpacts: Record<string, TestImpact>
-    ): Promise<TestResult[]> {
-        // Similar approach as JS tests, but for C#
-        return this.simulateTestResults(tests, testImpacts);
-    }
-
-    /**
-     * Run Go tests
-     */
-    private async runGoTests(
-        filePath: string,
-        tests: { testId: string; testName: string }[],
-        testImpacts: Record<string, TestImpact>
-    ): Promise<TestResult[]> {
-        // Similar approach as JS tests, but for Go
-        return this.simulateTestResults(tests, testImpacts);
+/**
+ * In a real implementation, this method would launch the actual Python test via child_process.exec
+ * and parse the results.
+ */
+    private async executePythonTest(command: string): Promise<{passed: boolean, output: string, executionTime: number}> {
+        // This is a placeholder/mock implementation
+        // In a real extension, you would use child_process.exec to run the test
+        
+        return new Promise((resolve) => {
+            // Simulate test execution time
+            const startTime = Date.now();
+            setTimeout(() => {
+                const executionTime = Date.now() - startTime;
+                const passed = Math.random() > 0.3; // 70% pass rate for simulation
+                
+                let output = '';
+                if (passed) {
+                    output = `Test passed in ${executionTime}ms`;
+                } else {
+                    output = `Test failed: AssertionError: Expected value not received`;
+                }
+                
+                resolve({
+                    passed,
+                    output,
+                    executionTime
+                });
+            }, Math.random() * 300 + 50); // Random delay between 50-350ms
+        });
     }
 
     /**

@@ -1,4 +1,4 @@
-// Config Manager - Manages extension configuration
+// ConfigManager.ts - Fixed language support configuration
 
 import * as vscode from 'vscode';
 
@@ -42,26 +42,54 @@ export class ConfigManager {
     }
 
     /**
-     * Get code file extensions to consider
+     * Get code file extensions to consider - FIXED to use standard VS Code language identifiers
      */
     public getCodeFileExtensions(): string[] {
         return vscode.workspace.getConfiguration('sikg').get<string[]>('codeFileExtensions', [
-            'ts', 'js', 'tsx', 'jsx', 'java', 'py', 'cs', 'go'
+            'py',      // Python files
+            'js',      // JavaScript files
+            'ts',      // TypeScript files
+            'jsx',     // React JavaScript files
+            'tsx',     // React TypeScript files
+            'java',    // Java files
+            'cs',      // C# files
+            'go'       // Go files
         ]);
     }
 
     /**
-     * Get test file patterns to identify test files
+     * Get test file patterns to identify test files - FIXED patterns
      */
     public getTestFilePatterns(): string[] {
         return vscode.workspace.getConfiguration('sikg').get<string[]>('testFilePatterns', [
-            '**/*.test.{ts,js,tsx,jsx}',
-            '**/*.spec.{ts,js,tsx,jsx}',
-            '**/*Test.{java,kt}',
-            '**/*Tests.{cs,fs}',
-            '**/*_test.go',
+            // Python test patterns
             '**/test_*.py',
-            '**/*_test.py'
+            '**/*_test.py',
+            '**/tests.py',
+            '**/test*.py',
+            
+            // JavaScript/TypeScript test patterns
+            '**/*.test.js',
+            '**/*.test.ts',
+            '**/*.test.jsx',
+            '**/*.test.tsx',
+            '**/*.spec.js',
+            '**/*.spec.ts',
+            '**/*.spec.jsx',
+            '**/*.spec.tsx',
+            
+            // Java test patterns
+            '**/*Test.java',
+            '**/*Tests.java',
+            '**/Test*.java',
+            
+            // C# test patterns
+            '**/*Test.cs',
+            '**/*Tests.cs',
+            '**/Test*.cs',
+            
+            // Go test patterns
+            '**/*_test.go'
         ]);
     }
 
@@ -74,7 +102,14 @@ export class ConfigManager {
             '**/dist/**',
             '**/build/**',
             '**/coverage/**',
-            '**/.git/**'
+            '**/.git/**',
+            '**/venv/**',
+            '**/env/**',
+            '**/__pycache__/**',
+            '**/target/**',      // Java/Maven
+            '**/bin/**',         // C#/.NET
+            '**/obj/**',         // C#/.NET
+            '**/vendor/**'       // Go/PHP
         ]);
     }
 
@@ -104,5 +139,77 @@ export class ConfigManager {
      */
     public getLowImpactThreshold(): number {
         return vscode.workspace.getConfiguration('sikg').get<number>('lowImpactThreshold', 0.3);
+    }
+
+    /**
+     * Get supported programming languages - FIXED to use VS Code language identifiers
+     */
+    public getSupportedLanguages(): string[] {
+        return [
+            'python',      // VS Code language identifier for Python
+            'javascript',  // VS Code language identifier for JavaScript
+            'typescript',  // VS Code language identifier for TypeScript
+            'java',        // VS Code language identifier for Java
+            'csharp',      // VS Code language identifier for C#
+            'go'           // VS Code language identifier for Go
+        ];
+    }
+
+    /**
+     * Get language from file extension - FIXED mapping
+     */
+    public getLanguageFromExtension(extension: string): string {
+        const extensionMap: Record<string, string> = {
+            '.py': 'python',
+            '.js': 'javascript',
+            '.jsx': 'javascript',
+            '.ts': 'typescript',
+            '.tsx': 'typescript',
+            '.java': 'java',
+            '.cs': 'csharp',
+            '.go': 'go'
+        };
+
+        const normalizedExt = extension.toLowerCase();
+        return extensionMap[normalizedExt] || 'plaintext';
+    }
+
+    /**
+     * Check if a language is supported
+     */
+    public isLanguageSupported(language: string): boolean {
+        return this.getSupportedLanguages().includes(language.toLowerCase());
+    }
+
+    /**
+     * Get file extensions for a specific language
+     */
+    public getExtensionsForLanguage(language: string): string[] {
+        const languageExtensions: Record<string, string[]> = {
+            'python': ['.py'],
+            'javascript': ['.js', '.jsx'],
+            'typescript': ['.ts', '.tsx'],
+            'java': ['.java'],
+            'csharp': ['.cs'],
+            'go': ['.go']
+        };
+
+        return languageExtensions[language.toLowerCase()] || [];
+    }
+
+    /**
+     * Get test frameworks for a language
+     */
+    public getTestFrameworksForLanguage(language: string): string[] {
+        const frameworkMap: Record<string, string[]> = {
+            'python': ['unittest', 'pytest'],
+            'javascript': ['jest', 'mocha', 'jasmine'],
+            'typescript': ['jest', 'mocha', 'jasmine'],
+            'java': ['junit', 'testng'],
+            'csharp': ['nunit', 'xunit', 'mstest'],
+            'go': ['testing']
+        };
+
+        return frameworkMap[language.toLowerCase()] || [];
     }
 }

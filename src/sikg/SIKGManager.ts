@@ -1,4 +1,4 @@
-// SIKGManager.ts - Core implementation of the Semantic Impact Knowledge Graph
+// FIXED SIKGManager.ts - Proper node marking and graph state management
 
 import * as vscode from 'vscode';
 import * as path from 'path';
@@ -10,13 +10,7 @@ import { TestParser } from './TestParser';
 import { Graph, Node, Edge, SemanticChangeInfo, TestResult } from './GraphTypes';
 
 /**
- * SIKGManager - Core class that manages the Semantic Impact Knowledge Graph
- * 
- * This class is responsible for:
- * 1. Building and maintaining the knowledge graph of code elements and tests
- * 2. Tracking relationships between elements
- * 3. Updating the graph based on code changes and test results
- * 4. Providing graph traversal and query capabilities
+ * FIXED SIKGManager - Proper graph state management and visualization data
  */
 export class SIKGManager {
     private graph: Graph;
@@ -289,7 +283,7 @@ export class SIKGManager {
     }
 
     /**
-     * Export a simplified version of the graph for visualization
+     * FIXED: Export a simplified version of the graph for visualization with proper change marking
      */
     public async exportGraphForVisualization(): Promise<any> {
         if (!this.initialized) {
@@ -300,15 +294,17 @@ export class SIKGManager {
         const nodes: any[] = [];
         const links: any[] = [];
         
-        // Add nodes
+        // FIXED: Add nodes with proper change tracking
         for (const [id, node] of this.graph.nodes.entries()) {
             nodes.push({
                 id,
                 label: node.name || id,
                 type: node.type,
-                impact: node.properties.impactScore,
-                changed: node.properties.changed || false,
-                fileName: path.basename(node.filePath || '')
+                impact: node.properties.impactScore || 0,
+                changed: node.properties.changed || false, // FIXED: Include change status
+                fileName: path.basename(node.filePath || ''),
+                semanticChangeType: node.properties.semanticChangeType, // FIXED: Include change type
+                filePath: node.filePath // FIXED: Include full file path for debugging
             });
         }
         
@@ -321,6 +317,13 @@ export class SIKGManager {
                 weight: edge.weight
             });
         }
+        
+        // FIXED: Log debug information
+        const changedNodes = nodes.filter(n => n.changed);
+        const testNodes = nodes.filter(n => n.type === 'TestCase');
+        const codeNodes = nodes.filter(n => n.type === 'CodeElement');
+        
+        Logger.info(`Graph visualization export: ${nodes.length} total nodes (${codeNodes.length} code, ${testNodes.length} test), ${changedNodes.length} changed nodes`);
         
         return { nodes, links };
     }
@@ -458,9 +461,15 @@ export class SIKGManager {
     }
 
     /**
-     * Mark nodes as changed with a specific semantic type
+     * FIXED: Mark nodes as changed with proper change tracking and impact propagation
      */
     public markNodesAsChanged(changedNodes: SemanticChangeInfo[]): void {
+        // FIXED: First reset all nodes to unchanged state
+        this.resetChangedStatus();
+        
+        const changedNodeIds = new Set<string>();
+        
+        // Mark directly changed nodes
         for (const change of changedNodes) {
             const node = this.graph.nodes.get(change.nodeId);
             if (node) {
@@ -472,23 +481,94 @@ export class SIKGManager {
                     changeDetails: change.changeDetails,
                     initialImpactScore: change.initialImpactScore
                 };
+                
+                changedNodeIds.add(change.nodeId);
+                Logger.info(`Marked node as changed: ${node.name} (${change.nodeId}) - ${change.semanticType}`);
+            }
+        }
+        
+        // FIXED: Find and mark impacted test nodes based on relationships
+        this.markImpactedTestNodes(changedNodeIds);
+        
+        Logger.info(`Total nodes marked as changed: ${changedNodeIds.size}`);
+    }
+
+    /**
+     * FIXED: Mark test nodes that are impacted by changed code nodes
+     */
+    private markImpactedTestNodes(changedCodeNodeIds: Set<string>): void {
+        const testNodes = this.getTestNodes();
+        
+        for (const testNode of testNodes) {
+            // Check if this test has any edges to changed code nodes
+            const hasImpactPath = this.hasPathToChangedNodes(testNode.id, changedCodeNodeIds);
+            
+            if (hasImpactPath) {
+                testNode.properties = {
+                    ...testNode.properties,
+                    impacted: true,
+                    impactedBy: Array.from(changedCodeNodeIds)
+                };
+                
+                Logger.info(`Marked test as impacted: ${testNode.name} (${testNode.id})`);
             }
         }
     }
 
     /**
-     * Reset changed status of all nodes
+     * FIXED: Check if a test node has a path to any changed code nodes
+     */
+    private hasPathToChangedNodes(testNodeId: string, changedCodeNodeIds: Set<string>, maxDepth: number = 3): boolean {
+        const visited = new Set<string>();
+        const queue: { nodeId: string; depth: number }[] = [{ nodeId: testNodeId, depth: 0 }];
+        
+        while (queue.length > 0) {
+            const { nodeId, depth } = queue.shift()!;
+            
+            if (visited.has(nodeId) || depth > maxDepth) {
+                continue;
+            }
+            
+            visited.add(nodeId);
+            
+            // Check if we've reached a changed code node
+            if (changedCodeNodeIds.has(nodeId)) {
+                return true;
+            }
+            
+            // Add connected nodes to the queue
+            const outgoingEdges = this.getOutgoingEdges(nodeId);
+            for (const edge of outgoingEdges) {
+                if (!visited.has(edge.target)) {
+                    queue.push({ nodeId: edge.target, depth: depth + 1 });
+                }
+            }
+        }
+        
+        return false;
+    }
+
+    /**
+     * FIXED: Reset changed status of all nodes properly
      */
     public resetChangedStatus(): void {
+        let resetCount = 0;
         for (const node of this.graph.nodes.values()) {
-            if (node.properties.changed) {
+            if (node.properties.changed || node.properties.impacted) {
                 node.properties = {
                     ...node.properties,
                     changed: false,
+                    impacted: false,
                     semanticChangeType: undefined,
-                    initialImpactScore: undefined
+                    initialImpactScore: undefined,
+                    impactedBy: undefined
                 };
+                resetCount++;
             }
+        }
+        
+        if (resetCount > 0) {
+            Logger.debug(`Reset change status for ${resetCount} nodes`);
         }
     }
 
@@ -499,6 +579,19 @@ export class SIKGManager {
         const result: Node[] = [];
         for (const node of this.graph.nodes.values()) {
             if (node.properties.changed) {
+                result.push(node);
+            }
+        }
+        return result;
+    }
+
+    /**
+     * FIXED: Get all impacted nodes (including changed and test nodes impacted by changes)
+     */
+    public getImpactedNodes(): Node[] {
+        const result: Node[] = [];
+        for (const node of this.graph.nodes.values()) {
+            if (node.properties.changed || node.properties.impacted) {
                 result.push(node);
             }
         }
