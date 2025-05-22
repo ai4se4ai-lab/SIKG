@@ -1,4 +1,4 @@
-// Extension Entry Point
+// extension.ts - Fixed extension entry point with proper error handling
 
 import * as vscode from 'vscode';
 import { SIKGManager } from './sikg/SIKGManager';
@@ -19,98 +19,290 @@ let statusBarManager: StatusBarManager;
 let sikgViewProvider: SIKGViewProvider;
 let gitService: GitService;
 let testRunnerService: TestRunnerService;
+let configManager: ConfigManager;
 
 export async function activate(context: vscode.ExtensionContext) {
-    // Initialize configuration
-    const configManager = new ConfigManager(context);
-    await configManager.initialize();
+    try {
+        // Initialize configuration first
+        configManager = new ConfigManager(context);
+        await configManager.initialize();
+        
+        // Initialize logger with enhanced error handling
+        Logger.init(context, configManager.getLogLevel());
+        Logger.info('🚀 Activating SIKG Extension...');
+        
+        // Check for required extensions
+        await checkRequiredExtensions();
+        
+        // Initialize core components with error handling
+        statusBarManager = new StatusBarManager(context);
+        statusBarManager.updateStatus('Initializing...', true);
+        
+        gitService = new GitService();
+        testRunnerService = new TestRunnerService();
+        
+        // Initialize SIKG manager with proper error handling
+        try {
+            sikgManager = new SIKGManager(context, configManager);
+            await sikgManager.initialize();
+            Logger.info('✅ SIKG Manager initialized successfully');
+        } catch (error) {
+            Logger.error('❌ Failed to initialize SIKG Manager:', error);
+            throw error;
+        }
+        
+        // Initialize change analyzer and test prioritizer
+        try {
+            changeAnalyzer = new ChangeAnalyzer(sikgManager, gitService, configManager);
+            testPrioritizer = new TestPrioritizer(sikgManager, configManager);
+            Logger.info('✅ Analysis components initialized successfully');
+        } catch (error) {
+            Logger.error('❌ Failed to initialize analysis components:', error);
+            throw error;
+        }
+        
+        // Register UI components with error handling
+        try {
+            sikgViewProvider = new SIKGViewProvider(context, sikgManager, testPrioritizer);
+            context.subscriptions.push(
+                vscode.window.registerWebviewViewProvider('sikgView', sikgViewProvider)
+            );
+            Logger.info('✅ UI components registered successfully');
+        } catch (error) {
+            Logger.error('❌ Failed to register UI components:', error);
+            throw error;
+        }
+        
+        // Register commands with enhanced error handling
+        registerCommands(context);
+        
+        // Setup event listeners with error handling
+        setupEventListeners(context);
+        
+        // Show success status
+        statusBarManager.updateStatus('Ready');
+        Logger.info('🎉 SIKG Extension activated successfully');
+        
+        // Show welcome message for first-time users
+        showWelcomeMessage(context);
+        
+    } catch (error) {
+        Logger.error('💥 Critical error during SIKG activation:', error);
+        
+        // Update status to show error
+        if (statusBarManager) {
+            statusBarManager.updateStatus('Activation Failed', false);
+        }
+        
+        // Show user-friendly error message
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        vscode.window.showErrorMessage(
+            `SIKG Extension failed to activate: ${errorMessage}. Check the output panel for details.`,
+            'Open Output Panel',
+            'Retry'
+        ).then(action => {
+            if (action === 'Open Output Panel') {
+                vscode.commands.executeCommand('workbench.panel.output.focus');
+            } else if (action === 'Retry') {
+                vscode.commands.executeCommand('workbench.action.reloadWindow');
+            }
+        });
+        
+        // Don't throw - let extension load in degraded mode
+    }
+}
+
+/**
+ * Check for required VS Code extensions
+ */
+async function checkRequiredExtensions(): Promise<void> {
+    const requiredExtensions = [
+        { id: 'ms-python.python', name: 'Python', required: false }
+    ];
     
-    // Initialize components
-    Logger.init(context, configManager.getLogLevel());
-    Logger.info('Activating SIKG Extension...');
+    const missingExtensions: string[] = [];
     
-    statusBarManager = new StatusBarManager(context);
+    for (const ext of requiredExtensions) {
+        const extension = vscode.extensions.getExtension(ext.id);
+        if (!extension) {
+            if (ext.required) {
+                missingExtensions.push(ext.name);
+            } else {
+                Logger.warn(`📦 Recommended extension '${ext.name}' is not installed. SIKG functionality may be limited.`);
+            }
+        } else if (!extension.isActive) {
+            try {
+                await extension.activate();
+                Logger.info(`✅ Activated extension: ${ext.name}`);
+            } catch (error) {
+                Logger.warn(`⚠️ Failed to activate extension ${ext.name}:`, error);
+            }
+        }
+    }
     
-    gitService = new GitService();
-    testRunnerService = new TestRunnerService();
+    if (missingExtensions.length > 0) {
+        const message = `SIKG requires the following extensions: ${missingExtensions.join(', ')}`;
+        const action = await vscode.window.showWarningMessage(
+            message,
+            'Install Extensions',
+            'Continue Anyway'
+        );
+        
+        if (action === 'Install Extensions') {
+            vscode.commands.executeCommand('workbench.extensions.search', missingExtensions[0]);
+        }
+    }
+}
+
+/**
+ * Show welcome message for first-time users
+ */
+function showWelcomeMessage(context: vscode.ExtensionContext): void {
+    const hasShownWelcome = context.globalState.get('sikg.hasShownWelcome', false);
     
-    sikgManager = new SIKGManager(context, configManager);
-    await sikgManager.initialize();
-    
-    changeAnalyzer = new ChangeAnalyzer(sikgManager, gitService, configManager);
-    testPrioritizer = new TestPrioritizer(sikgManager, configManager);
-    
-    // Register UI components
-    sikgViewProvider = new SIKGViewProvider(context, sikgManager, testPrioritizer);
-    context.subscriptions.push(
-        vscode.window.registerWebviewViewProvider('sikgView', sikgViewProvider)
-    );
-    
-    // Register commands
-    registerCommands(context);
-    
-    // Setup event listeners
-    setupEventListeners(context);
-    
-    Logger.info('SIKG Extension activated');
-    statusBarManager.updateStatus('SIKG Ready');
+    if (!hasShownWelcome) {
+        vscode.window.showInformationMessage(
+            'Welcome to SIKG! Ready to intelligently prioritize your tests based on code changes.',
+            'Get Started',
+            'Learn More'
+        ).then(action => {
+            if (action === 'Get Started') {
+                vscode.commands.executeCommand('sikg.analyzeChanges');
+            } else if (action === 'Learn More') {
+                vscode.env.openExternal(vscode.Uri.parse('https://github.com/your-repo/sikg'));
+            }
+        });
+        
+        context.globalState.update('sikg.hasShownWelcome', true);
+    }
 }
 
 function registerCommands(context: vscode.ExtensionContext) {
-    // Command to analyze the current changes and suggest tests
+    // Command to analyze the current changes and suggest tests with enhanced error handling
     context.subscriptions.push(
         vscode.commands.registerCommand('sikg.analyzeChanges', async () => {
             try {
+                Logger.info('🔍 Starting change analysis...');
                 statusBarManager.updateStatus('Analyzing changes...', true);
                 
-                // Get current changes from git
-                const changes = await gitService.getUncommittedChanges();
+                // Get current changes from git with error handling
+                let changes;
+                try {
+                    changes = await gitService.getUncommittedChanges();
+                } catch (error) {
+                    Logger.error('Failed to get uncommitted changes from Git:', error);
+                    vscode.window.showErrorMessage('Failed to get Git changes. Make sure you\'re in a Git repository.');
+                    statusBarManager.updateStatus('Git error');
+                    return;
+                }
+                
                 if (!changes || changes.length === 0) {
                     vscode.window.showInformationMessage('No changes detected to analyze.');
                     statusBarManager.updateStatus('No changes detected');
                     return;
                 }
                 
-                // Analyze semantic changes
-                const semanticChanges = await changeAnalyzer.analyzeChanges(changes);
+                Logger.info(`📄 Found ${changes.length} changed files`);
                 
-                // Calculate test impact
-                const testImpacts = await testPrioritizer.calculateTestImpact(semanticChanges);
+                // Analyze semantic changes with enhanced error handling
+                let semanticChanges;
+                try {
+                    semanticChanges = await changeAnalyzer.analyzeChanges(changes);
+                } catch (error) {
+                    Logger.error('Failed to analyze semantic changes:', error);
+                    
+                    // Check if it's the language detection error
+                    if (error instanceof Error && error.message.includes('unknown language')) {
+                        vscode.window.showErrorMessage(
+                            'Language detection error. Try running "SIKG: Fix Language Issues" command.',
+                            'Fix Language Issues'
+                        ).then(action => {
+                            if (action === 'Fix Language Issues') {
+                                vscode.commands.executeCommand('sikg.fixLanguageIssues');
+                            }
+                        });
+                    } else {
+                        if (error instanceof Error) {
+                            vscode.window.showErrorMessage(`Failed to analyze changes: ${error.message}`);
+                        } else {
+                            vscode.window.showErrorMessage(`Failed to analyze changes: ${String(error)}`);
+                        }
+                    }
+                    
+                    statusBarManager.updateStatus('Analysis failed');
+                    return;
+                }
+                
+                if (semanticChanges.length === 0) {
+                    vscode.window.showInformationMessage('No semantic changes found in supported code files.');
+                    statusBarManager.updateStatus('No semantic changes');
+                    return;
+                }
+                
+                Logger.info(`🧠 Found ${semanticChanges.length} semantic changes`);
+                
+                // Calculate test impact with error handling
+                let testImpacts;
+                try {
+                    testImpacts = await testPrioritizer.calculateTestImpact(semanticChanges);
+                } catch (error) {
+                    Logger.error('Failed to calculate test impact:', error);
+                    vscode.window.showErrorMessage(`Failed to prioritize tests: ${error instanceof Error ? error.message : String(error)}`);
+                    statusBarManager.updateStatus('Prioritization failed');
+                    return;
+                }
                 
                 // Display results in SIKG view
                 sikgViewProvider.updateWithResults(semanticChanges, testImpacts);
                 
                 // Show success message
                 const testCount = Object.keys(testImpacts).length;
-                vscode.window.showInformationMessage(
-                    `SIKG analysis complete. ${testCount} tests prioritized based on changes.`
-                );
-                statusBarManager.updateStatus(`${testCount} tests prioritized`);
+                const message = testCount > 0 
+                    ? `SIKG analysis complete. ${testCount} tests prioritized based on changes.`
+                    : 'SIKG analysis complete. No tests found to prioritize.';
+                    
+                vscode.window.showInformationMessage(message);
+                statusBarManager.updateStatus(testCount > 0 ? `${testCount} tests prioritized` : 'No tests prioritized');
                 
             } catch (error) {
-                Logger.error('Error analyzing changes:', error);
-                vscode.window.showErrorMessage(`Error analyzing changes: ${error instanceof Error ? error.message : String(error)}`);
-                statusBarManager.updateStatus('Analysis failed', false);
+                Logger.error('❌ Unexpected error during change analysis:', error);
+                vscode.window.showErrorMessage(`Unexpected error: ${error instanceof Error ? error.message : String(error)}`);
+                statusBarManager.updateStatus('Analysis failed');
             }
         })
     );
     
-    // Command to run prioritized tests
+    // Command to run prioritized tests with enhanced error handling
     context.subscriptions.push(
         vscode.commands.registerCommand('sikg.runPrioritizedTests', async (topN?: number) => {
             try {
+                Logger.info(`🧪 Starting prioritized test run (top ${topN || 'all'})`);
+                
                 const testImpacts = sikgViewProvider.getLatestTestImpacts();
                 if (!testImpacts || Object.keys(testImpacts).length === 0) {
                     vscode.window.showInformationMessage('No prioritized tests available. Run analysis first.');
                     return;
                 }
                 
-                // Run the prioritized tests
+                // Run the prioritized tests with error handling
                 statusBarManager.updateStatus('Running tests...', true);
-                const results = await testRunnerService.runPrioritizedTests(testImpacts, topN);
+                let results;
+                try {
+                    results = await testRunnerService.runPrioritizedTests(testImpacts, topN);
+                } catch (error) {
+                    Logger.error('Failed to run prioritized tests:', error);
+                    vscode.window.showErrorMessage(`Failed to run tests: ${error instanceof Error ? error.message : String(error)}`);
+                    statusBarManager.updateStatus('Test run failed');
+                    return;
+                }
                 
                 // Update SIKG with test results
-                await sikgManager.updateWithTestResults(results);
+                try {
+                    await sikgManager.updateWithTestResults(results);
+                } catch (error) {
+                    Logger.warn('Failed to update SIKG with test results:', error);
+                    // Continue - this is not critical
+                }
                 
                 // Display results
                 sikgViewProvider.updateWithTestResults(results);
@@ -118,95 +310,279 @@ function registerCommands(context: vscode.ExtensionContext) {
                 // Show success message
                 const passedCount = results.filter(r => r.status === 'passed').length;
                 const failedCount = results.filter(r => r.status === 'failed').length;
-                vscode.window.showInformationMessage(
-                    `Test run complete. ${passedCount} passed, ${failedCount} failed.`
-                );
-                statusBarManager.updateStatus(`Tests: ${passedCount}/${results.length} passed`);
+                const totalCount = results.length;
+                
+                const message = `Test run complete. ${passedCount} passed, ${failedCount} failed out of ${totalCount} tests.`;
+                
+                if (failedCount > 0) {
+                    vscode.window.showWarningMessage(message);
+                } else {
+                    vscode.window.showInformationMessage(message);
+                }
+                
+                statusBarManager.updateStatus(`Tests: ${passedCount}/${totalCount} passed`);
                 
             } catch (error) {
-                Logger.error('Error running prioritized tests:', error);
-                vscode.window.showErrorMessage(`Error running tests: ${error instanceof Error ? error.message : String(error)}`);
-                statusBarManager.updateStatus('Test run failed', false);
+                Logger.error('❌ Unexpected error during test run:', error);
+                vscode.window.showErrorMessage(`Test run failed: ${error instanceof Error ? error.message : String(error)}`);
+                statusBarManager.updateStatus('Test run failed');
             }
         })
     );
     
-    // Command to visualize the impact graph
+    // Command to visualize the impact graph with error handling
     context.subscriptions.push(
         vscode.commands.registerCommand('sikg.visualizeGraph', async () => {
             try {
+                Logger.info('🔍 Creating graph visualization...');
+                
                 // Get the current semantic impact knowledge graph
-                const graph = await sikgManager.exportGraphForVisualization();
+                let graph;
+                try {
+                    graph = await sikgManager.exportGraphForVisualization();
+                } catch (error) {
+                    Logger.error('Failed to export graph for visualization:', error);
+                    vscode.window.showErrorMessage('Failed to export graph data for visualization.');
+                    return;
+                }
                 
                 // Open the visualization in a webview
                 const panel = vscode.window.createWebviewPanel(
                     'sikgVisualization',
                     'SIKG Visualization',
                     vscode.ViewColumn.Two,
-                    { enableScripts: true }
+                    { 
+                        enableScripts: true,
+                        retainContextWhenHidden: true
+                    }
                 );
                 
                 panel.webview.html = createGraphVisualizationHtml(graph);
                 
+                Logger.info('✅ Graph visualization opened');
+                
             } catch (error) {
-                Logger.error('Error visualizing graph:', error);
-                vscode.window.showErrorMessage(`Error visualizing graph: ${error instanceof Error ? error.message : String(error)}`);
+                Logger.error('❌ Error creating graph visualization:', error);
+                vscode.window.showErrorMessage(`Failed to create visualization: ${error instanceof Error ? error.message : String(error)}`);
             }
         })
     );
     
-    // Command to rebuild the knowledge graph
+    // Command to rebuild the knowledge graph with enhanced error handling
     context.subscriptions.push(
         vscode.commands.registerCommand('sikg.rebuildGraph', async () => {
             try {
+                Logger.info('🔄 Starting knowledge graph rebuild...');
                 statusBarManager.updateStatus('Rebuilding knowledge graph...', true);
+                
+                // Ask for confirmation
+                const confirm = await vscode.window.showWarningMessage(
+                    'This will rebuild the entire knowledge graph from scratch. This may take a while.',
+                    'Rebuild',
+                    'Cancel'
+                );
+                
+                if (confirm !== 'Rebuild') {
+                    statusBarManager.updateStatus('Rebuild cancelled');
+                    return;
+                }
                 
                 // Rebuild the entire graph
                 await sikgManager.rebuildGraph();
                 
                 vscode.window.showInformationMessage('SIKG Knowledge Graph rebuilt successfully.');
                 statusBarManager.updateStatus('Knowledge graph rebuilt');
+                Logger.info('✅ Knowledge graph rebuild completed');
                 
             } catch (error) {
-                Logger.error('Error rebuilding knowledge graph:', error);
-                vscode.window.showErrorMessage(`Error rebuilding graph: ${error instanceof Error ? error.message : String(error)}`);
-                statusBarManager.updateStatus('Rebuild failed', false);
+                Logger.error('❌ Error rebuilding knowledge graph:', error);
+                vscode.window.showErrorMessage(`Failed to rebuild graph: ${error instanceof Error ? error.message : String(error)}`);
+                statusBarManager.updateStatus('Rebuild failed');
+            }
+        })
+    );
+    
+    // Command to show results panel
+    context.subscriptions.push(
+        vscode.commands.registerCommand('sikg.showResults', async () => {
+            try {
+                // Focus on the SIKG view
+                await vscode.commands.executeCommand('workbench.view.extension.sikg-sidebar');
+            } catch (error) {
+                Logger.error('Error showing results panel:', error);
+            }
+        })
+    );
+    
+    // Add diagnostic commands for troubleshooting
+    context.subscriptions.push(
+        vscode.commands.registerCommand('sikg.diagnoseLangaugeIssues', async () => {
+            try {
+                await diagnoseLangaugeIssues();
+            } catch (error) {
+                Logger.error('Error running language diagnostics:', error);
+                vscode.window.showErrorMessage('Failed to run diagnostics. Check the output panel for details.');
+            }
+        })
+    );
+    
+    context.subscriptions.push(
+        vscode.commands.registerCommand('sikg.fixLanguageIssues', async () => {
+            try {
+                await fixLanguageIssues();
+            } catch (error) {
+                Logger.error('Error applying language fixes:', error);
+                vscode.window.showErrorMessage('Failed to apply fixes. Check the output panel for details.');
             }
         })
     );
 }
 
 function setupEventListeners(context: vscode.ExtensionContext) {
-    // Listen for git changes when users save files
+    // Listen for git changes when users save files with error handling
     context.subscriptions.push(
         vscode.workspace.onDidSaveTextDocument(async (document) => {
-            const config = vscode.workspace.getConfiguration('sikg');
-            const analyzeOnSave = config.get<boolean>('analyzeOnSave');
-            
-            if (analyzeOnSave) {
-                // Run change analysis on save
-                vscode.commands.executeCommand('sikg.analyzeChanges');
+            try {
+                const config = vscode.workspace.getConfiguration('sikg');
+                const analyzeOnSave = config.get<boolean>('analyzeOnSave', false);
+                
+                if (analyzeOnSave) {
+                    Logger.debug(`📄 File saved: ${document.fileName}, triggering analysis`);
+                    // Run change analysis on save
+                    await vscode.commands.executeCommand('sikg.analyzeChanges');
+                }
+            } catch (error) {
+                Logger.error('Error in onDidSaveTextDocument handler:', error);
             }
         })
     );
     
-    // Listen for test executions to gather feedback data
+    // Listen for test executions to gather feedback data with error handling
     context.subscriptions.push(
         vscode.tasks.onDidEndTaskProcess(async (event) => {
-            // Check if this is a test run task
-            if (event.execution.task.group === vscode.TaskGroup.Test) {
-                try {
+            try {
+                // Check if this is a test run task
+                if (event.execution.task.group === vscode.TaskGroup.Test) {
+                    Logger.debug('Test task completed, processing results...');
+                    
                     // Get test results and update the SIKG
                     const results = await testRunnerService.parseTestResults(event.execution);
                     if (results && results.length > 0) {
                         await sikgManager.updateWithTestResults(results);
+                        Logger.info(`Updated SIKG with ${results.length} test results`);
                     }
-                } catch (error) {
-                    Logger.error('Error processing test results:', error);
                 }
+            } catch (error) {
+                Logger.error('Error processing test results:', error);
             }
         })
     );
+    
+    // Listen for configuration changes
+    context.subscriptions.push(
+        vscode.workspace.onDidChangeConfiguration(async (event) => {
+            try {
+                if (event.affectsConfiguration('sikg')) {
+                    Logger.info('SIKG configuration changed, reinitializing...');
+                    
+                    // Reinitialize config manager
+                    await configManager.initialize();
+                    
+                    // Update logger level if changed
+                    const newLogLevel = configManager.getLogLevel();
+                    Logger.init(context, newLogLevel);
+                    
+                    Logger.info('✅ Configuration reloaded');
+                }
+            } catch (error) {
+                Logger.error('Error handling configuration change:', error);
+            }
+        })
+    );
+}
+
+/**
+ * Diagnostic function to identify language issues
+ */
+async function diagnoseLangaugeIssues(): Promise<void> {
+    Logger.info('🔍 Running SIKG language diagnostics...');
+    
+    // Check VS Code language support
+    try {
+        const languages = await vscode.languages.getLanguages();
+        const pythonSupported = languages.includes('python');
+        
+        Logger.info(`VS Code languages: ${languages.length} total, Python supported: ${pythonSupported}`);
+        
+        if (!pythonSupported) {
+            vscode.window.showWarningMessage(
+                'Python language not supported by VS Code. Install the Python extension.',
+                'Install Python Extension'
+            ).then(action => {
+                if (action === 'Install Python Extension') {
+                    vscode.commands.executeCommand('workbench.extensions.search', 'ms-python.python');
+                }
+            });
+        }
+    } catch (error) {
+        Logger.error('Error checking language support:', error);
+    }
+    
+    // Check workspace for Python files
+    try {
+        const pythonFiles = await vscode.workspace.findFiles('**/*.py', '**/node_modules/**', 5);
+        Logger.info(`Found ${pythonFiles.length} Python files in workspace`);
+        
+        if (pythonFiles.length > 0) {
+            const firstFile = pythonFiles[0];
+            const doc = await vscode.workspace.openTextDocument(firstFile);
+            Logger.info(`Sample file ${firstFile.fsPath} detected as language: ${doc.languageId}`);
+        }
+    } catch (error) {
+        Logger.error('Error analyzing workspace files:', error);
+    }
+    
+    vscode.window.showInformationMessage('Language diagnostics complete. Check the output panel for details.');
+}
+
+/**
+ * Apply fixes for common language issues
+ */
+async function fixLanguageIssues(): Promise<void> {
+    Logger.info('🔧 Applying language detection fixes...');
+    
+    try {
+        // Update SIKG configuration
+        const config = vscode.workspace.getConfiguration('sikg');
+        
+        await config.update('supportedLanguages', ['python', 'javascript', 'typescript', 'java', 'csharp', 'go'], vscode.ConfigurationTarget.Global);
+        await config.update('codeFileExtensions', ['py', 'js', 'jsx', 'ts', 'tsx', 'java', 'cs', 'go'], vscode.ConfigurationTarget.Global);
+        
+        Logger.info('✅ Updated SIKG configuration');
+        
+        // Check Python extension
+        const pythonExt = vscode.extensions.getExtension('ms-python.python');
+        if (!pythonExt) {
+            const action = await vscode.window.showWarningMessage(
+                'Python extension is required. Install it now?',
+                'Install',
+                'Skip'
+            );
+            
+            if (action === 'Install') {
+                await vscode.commands.executeCommand('workbench.extensions.search', 'ms-python.python');
+            }
+        } else if (!pythonExt.isActive) {
+            await pythonExt.activate();
+            Logger.info('✅ Activated Python extension');
+        }
+        
+        vscode.window.showInformationMessage('Language fixes applied. Please reload the window.');
+        
+    } catch (error) {
+        Logger.error('Error applying language fixes:', error);
+        vscode.window.showErrorMessage(`Failed to apply fixes: ${error instanceof Error ? error.message : String(error)}`);
+    }
 }
 
 function createGraphVisualizationHtml(graph: any): string {
@@ -453,9 +829,16 @@ function createGraphVisualizationHtml(graph: any): string {
 }
 
 export function deactivate() {
-    // Clean up resources
-    Logger.info('Deactivating SIKG Extension...');
-    if (sikgManager) {
-        sikgManager.dispose();
+    // Clean up resources with error handling
+    Logger.info('🔄 Deactivating SIKG Extension...');
+    
+    try {
+        if (sikgManager) {
+            sikgManager.dispose();
+        }
+    } catch (error) {
+        Logger.error('Error disposing SIKG Manager:', error);
     }
+    
+    Logger.info('✅ SIKG Extension deactivated');
 }

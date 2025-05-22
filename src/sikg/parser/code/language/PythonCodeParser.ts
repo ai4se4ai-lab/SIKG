@@ -2,6 +2,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import * as vscode from 'vscode';
 import { CodeElement } from '../../../GraphTypes';
 import { Logger } from '../../../../utils/Logger';
 import { ParserUtils } from '../../util/ParserUtils';
@@ -60,17 +61,39 @@ export class PythonCodeParser extends CodeParserBase {
         Logger.debug(`Parsing Python file: ${filePath}`);
 
         try {
+            // Convert to absolute path for consistent ID generation
+            const absolutePath = this.resolveToAbsolutePath(filePath);
+            
             // Use AST parsing if available
             if (this.astEnabled) {
-                return await this.parsePythonWithAst(content, filePath);
+                return await this.parsePythonWithAst(content, absolutePath);
             } else {
                 // Fall back to regex-based parsing
-                Logger.debug(`AST parsing not available, using regex-based parsing for ${filePath}`);
-                return this.parsePythonWithRegex(content, filePath);
+                Logger.debug(`AST parsing not available, using regex-based parsing for ${absolutePath}`);
+                return this.parsePythonWithRegex(content, absolutePath);
             }
         } catch (error) {
             return this.handleError(filePath, error);
         }
+    }
+
+    /**
+     * Resolve file path to absolute path for consistent ID generation
+     */
+    private resolveToAbsolutePath(filePath: string): string {
+        // If it's already absolute, return as-is
+        if (path.isAbsolute(filePath)) {
+            return filePath;
+        }
+        
+        // If we have a workspace, resolve relative to workspace
+        if (vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0) {
+            const workspaceRoot = vscode.workspace.workspaceFolders[0].uri.fsPath;
+            return path.resolve(workspaceRoot, filePath);
+        }
+        
+        // Fallback to current working directory
+        return path.resolve(filePath);
     }
 
     /**
@@ -145,10 +168,11 @@ export class PythonCodeParser extends CodeParserBase {
             relations: []
         });
         
-        // Process imports
+        // Process imports with enhanced tracking
         for (const importItem of astData.imports) {
             const importedModuleName = importItem.name;
-            const importId = this.generateElementId('module', importedModuleName, importedModuleName);
+            const resolvedImportPath = this.resolveImportPath(importedModuleName, filePath);
+            const importId = this.generateElementId('module', importedModuleName, resolvedImportPath);
             
             // Add import relationship to the module
             elements[0].relations.push({
@@ -159,7 +183,9 @@ export class PythonCodeParser extends CodeParserBase {
             
             // Store the name to ID mapping for imported names
             for (const name of importItem.imported_names || []) {
-                idMap.set(name, this.generateElementId('function', name, importedModuleName));
+                // Generate consistent IDs for imported functions
+                const functionId = this.generateElementId('function', name, resolvedImportPath);
+                idMap.set(name, functionId);
             }
         }
         
@@ -224,35 +250,9 @@ export class PythonCodeParser extends CodeParserBase {
                     ]
                 };
                 
-                // Add method calls
+                // Add method calls with proper ID resolution
                 for (const calledFunc of methodData.calls) {
-                    const isMethod = calledFunc.includes('.');
-                    let callTargetId: string;
-                    
-                    if (isMethod) {
-                        // This is a method call like obj.method()
-                        const [obj, method] = calledFunc.split('.');
-                        
-                        // Add USES relationship for the object
-                        const objId = idMap.get(obj) || this.generateElementId('class', obj, filePath);
-                        methodElement.relations.push({
-                            targetId: objId,
-                            type: 'USES',
-                            weight: 0.6
-                        });
-                        
-                        // Add CALLS relationship for the method
-                        callTargetId = this.generateElementId('method', method, filePath);
-                    } else {
-                        // This is a regular function call
-                        callTargetId = idMap.get(calledFunc) || this.generateElementId('function', calledFunc, filePath);
-                    }
-                    
-                    methodElement.relations.push({
-                        targetId: callTargetId,
-                        type: 'CALLS',
-                        weight: 0.8
-                    });
+                    this.addCallRelationship(methodElement, calledFunc, idMap, filePath);
                 }
                 
                 elements.push(methodElement);
@@ -284,41 +284,115 @@ export class PythonCodeParser extends CodeParserBase {
                 ]
             };
             
-            // Add function calls
+            // Add function calls with proper ID resolution
             for (const calledFunc of funcData.calls) {
-                const isMethod = calledFunc.includes('.');
-                let callTargetId: string;
-                
-                if (isMethod) {
-                    // This is a method call like obj.method()
-                    const [obj, method] = calledFunc.split('.');
-                    
-                    // Add USES relationship for the object
-                    const objId = idMap.get(obj) || this.generateElementId('class', obj, filePath);
-                    funcElement.relations.push({
-                        targetId: objId,
-                        type: 'USES',
-                        weight: 0.6
-                    });
-                    
-                    // Add CALLS relationship for the method
-                    callTargetId = this.generateElementId('method', method, filePath);
-                } else {
-                    // This is a regular function call
-                    callTargetId = idMap.get(calledFunc) || this.generateElementId('function', calledFunc, filePath);
-                }
-                
-                funcElement.relations.push({
-                    targetId: callTargetId,
-                    type: 'CALLS',
-                    weight: 0.8
-                });
+                this.addCallRelationship(funcElement, calledFunc, idMap, filePath);
             }
             
             elements.push(funcElement);
         }
         
         return this.buildRelationships(elements);
+    }
+
+    /**
+     * Add call relationship with proper ID resolution
+     */
+    private addCallRelationship(
+        element: CodeElement,
+        calledFunc: string,
+        idMap: Map<string, string>,
+        filePath: string
+    ): void {
+        const isMethod = calledFunc.includes('.');
+        let callTargetId: string;
+        
+        if (isMethod) {
+            // This is a method call like obj.method()
+            const [obj, method] = calledFunc.split('.');
+            
+            // Add USES relationship for the object
+            const objId = idMap.get(obj) || this.generateElementId('class', obj, filePath);
+            element.relations.push({
+                targetId: objId,
+                type: 'USES',
+                weight: 0.6
+            });
+            
+            // Add CALLS relationship for the method
+            callTargetId = this.generateElementId('method', method, filePath);
+        } else {
+            // This is a regular function call
+            callTargetId = idMap.get(calledFunc) || this.generateElementId('function', calledFunc, filePath);
+        }
+        
+        element.relations.push({
+            targetId: callTargetId,
+            type: 'CALLS',
+            weight: 0.8
+        });
+    }
+
+
+    /**
+     * Resolve import path to absolute file path
+     */
+    private resolveImportPath(importName: string, currentFilePath: string): string {
+        const currentDir = path.dirname(currentFilePath);
+        
+        // Handle relative imports
+        if (importName.startsWith('.')) {
+            const relativePath = importName.substring(1);
+            const resolvedPath = path.join(currentDir, relativePath + '.py');
+            if (fs.existsSync(resolvedPath)) {
+                return resolvedPath;
+            }
+        }
+        
+        // Handle absolute imports within the same directory
+        const sameDirPath = path.join(currentDir, importName + '.py');
+        if (fs.existsSync(sameDirPath)) {
+            return sameDirPath;
+        }
+        
+        // Handle common project structure patterns
+        const projectRoot = this.findProjectRoot(currentDir);
+        if (projectRoot) {
+            const projectPath = path.join(projectRoot, importName + '.py');
+            if (fs.existsSync(projectPath)) {
+                return projectPath;
+            }
+            
+            // Also check in src directory
+            const srcPath = path.join(projectRoot, 'src', importName + '.py');
+            if (fs.existsSync(srcPath)) {
+                return srcPath;
+            }
+        }
+        
+        // If we can't resolve, use the import name itself
+        return importName;
+    }
+
+    /**
+     * Find the project root directory
+     */
+    private findProjectRoot(startDir: string): string | null {
+        let currentDir = startDir;
+        
+        while (currentDir !== path.dirname(currentDir)) {
+            // Look for common project markers
+            if (fs.existsSync(path.join(currentDir, 'setup.py')) ||
+                fs.existsSync(path.join(currentDir, 'pyproject.toml')) ||
+                fs.existsSync(path.join(currentDir, 'requirements.txt')) ||
+                fs.existsSync(path.join(currentDir, '.git'))) {
+                return currentDir;
+            }
+            
+            currentDir = path.dirname(currentDir);
+        }
+        
+        return null;
     }
 
     /**
@@ -537,8 +611,10 @@ export class PythonCodeParser extends CodeParserBase {
                         
                         for (const item of importedItems) {
                             const importPath = fromModule ? `${fromModule}.${item}` : item;
+                            const resolvedImportPath = this.resolveImportPath(fromModule || item, filePath);
+                            
                             currentElement.relations.push({
-                                targetId: this.generateElementId('module', importPath, importPath),
+                                targetId: this.generateElementId('module', importPath, resolvedImportPath),
                                 type: 'IMPORTS',
                                 weight: 0.7
                             });
