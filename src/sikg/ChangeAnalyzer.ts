@@ -1,4 +1,4 @@
-// ChangeAnalyzer.ts - Fixed to properly handle language detection
+// Fixed ChangeAnalyzer.ts - Precise change detection and impact analysis
 
 import * as vscode from 'vscode';
 import * as crypto from 'crypto';
@@ -22,7 +22,7 @@ export class ChangeAnalyzer {
     }
 
     /**
-     * Analyze code changes to determine their semantic nature - FIXED language detection
+     * Analyze code changes to determine their semantic nature - FIXED with precise change detection
      */
     public async analyzeChanges(changes: FileChange[]): Promise<SemanticChangeInfo[]> {
         Logger.info(`Analyzing ${changes.length} file changes...`);
@@ -38,7 +38,7 @@ export class ChangeAnalyzer {
                     continue;
                 }
                 
-                // Get language properly - FIXED
+                // Get language properly
                 const language = this.getFileLanguage(filePath);
                 Logger.debug(`Detected language '${language}' for file: ${filePath}`);
                 
@@ -48,12 +48,12 @@ export class ChangeAnalyzer {
                     continue;
                 }
                 
-                // Extract modified code snippets
-                const modifiedSnippets = await this.extractModifiedSnippets(fileChange);
+                // FIXED: Extract only ACTUALLY modified code snippets with precise line tracking
+                const modifiedSnippets = await this.extractPreciseModifiedSnippets(fileChange);
                 
                 for (const snippet of modifiedSnippets) {
-                    // Find affected nodes in SIKG
-                    const affectedNodeIds = await this.findAffectedNodes(filePath, snippet.location);
+                    // FIXED: Find ONLY nodes that were actually changed in these specific lines
+                    const affectedNodeIds = await this.findPreciselyAffectedNodes(filePath, snippet);
                     
                     for (const nodeId of affectedNodeIds) {
                         // Classify the change semantically based on language
@@ -76,13 +76,15 @@ export class ChangeAnalyzer {
                                 oldCodeHash: this.hashCode(snippet.before),
                                 newCodeHash: this.hashCode(snippet.after),
                                 changeLocation: snippet.location,
-                                language: language, // Add language info
-                                filePath: filePath
+                                language: language,
+                                filePath: filePath,
+                                changeTimestamp: Date.now()
                             },
                             initialImpactScore
                         };
                         
                         result.push(semanticChange);
+                        Logger.info(`Found semantic change: ${semanticType} in node ${nodeId} (${snippet.location.startLine}-${snippet.location.endLine})`);
                     }
                 }
             } catch (error) {
@@ -90,7 +92,7 @@ export class ChangeAnalyzer {
             }
         }
         
-        // Mark the affected nodes as changed in the SIKG
+        // FIXED: Mark the affected nodes as changed in the SIKG with precise tracking
         this.sikgManager.markNodesAsChanged(result);
         
         Logger.info(`Identified ${result.length} semantic changes in code elements`);
@@ -98,7 +100,178 @@ export class ChangeAnalyzer {
     }
 
     /**
-     * Get file language with proper error handling - FIXED
+     * FIXED: Extract only the ACTUALLY modified code snippets with precise line tracking
+     */
+    private async extractPreciseModifiedSnippets(fileChange: FileChange): Promise<CodeSnippet[]> {
+        const result: CodeSnippet[] = [];
+        
+        try {
+            // Get the diff details from git service
+            const diffDetail = await this.gitService.getDiffDetails(fileChange.filePath);
+            
+            if (!diffDetail) {
+                return result;
+            }
+            
+            // FIXED: Process each hunk and track ONLY changed lines, not context
+            for (const hunk of diffDetail.hunks) {
+                const changedLines: number[] = [];
+                const beforeLines: string[] = [];
+                const afterLines: string[] = [];
+                
+                let currentOldLine = hunk.oldStart;
+                let currentNewLine = hunk.newStart;
+                
+                // Track which specific lines were actually changed (not context)
+                for (const line of hunk.lines) {
+                    if (line.type === 'delete') {
+                        beforeLines.push(line.content);
+                        changedLines.push(currentOldLine);
+                        currentOldLine++;
+                    } else if (line.type === 'add') {
+                        afterLines.push(line.content);
+                        changedLines.push(currentNewLine);
+                        currentNewLine++;
+                    } else if (line.type === 'context') {
+                        // Context lines are not changes, just move line counters
+                        beforeLines.push(line.content);
+                        afterLines.push(line.content);
+                        currentOldLine++;
+                        currentNewLine++;
+                    }
+                }
+                
+                // Only create snippet if there were actual changes (not just context)
+                const actualChanges = hunk.lines.filter(line => line.type === 'add' || line.type === 'delete');
+                if (actualChanges.length > 0) {
+                    // Calculate precise change boundaries
+                    const addedLines = hunk.lines.filter(line => line.type === 'add');
+                    const deletedLines = hunk.lines.filter(line => line.type === 'delete');
+                    
+                    // Find the actual start and end of changes
+                    const changeStartLine = Math.min(hunk.newStart, hunk.oldStart);
+                    const changeEndLine = Math.max(
+                        hunk.newStart + addedLines.length - 1,
+                        hunk.oldStart + deletedLines.length - 1
+                    );
+                    
+                    result.push({
+                        before: beforeLines.join('\n'),
+                        after: afterLines.join('\n'),
+                        linesChanged: actualChanges.length,
+                        location: {
+                            startLine: changeStartLine,
+                            endLine: changeEndLine,
+                            actualChangedLines: changedLines // Track exactly which lines changed
+                        }
+                    });
+                    
+                    Logger.debug(`Precise change detected: lines ${changeStartLine}-${changeEndLine}, ${actualChanges.length} actual changes`);
+                }
+            }
+            
+        } catch (error) {
+            Logger.error(`Error extracting modified snippets for ${fileChange.filePath}:`, error);
+        }
+        
+        return result;
+    }
+
+    /**
+     * FIXED: Find ONLY nodes that contain code that was actually changed
+     */
+    private async findPreciselyAffectedNodes(filePath: string, snippet: CodeSnippet): Promise<string[]> {
+        const result: string[] = [];
+        
+        try {
+            // Get all code nodes for this file
+            const codeNodes = this.sikgManager.getCodeNodes();
+            const normalizedFilePath = this.normalizeFilePath(filePath);
+            
+            for (const node of codeNodes) {
+                // FIXED: Only check nodes in the exact same file
+                if (!this.pathsMatch(node.filePath, normalizedFilePath)) {
+                    continue;
+                }
+                
+                if (!node.properties.loc) {
+                    continue;
+                }
+                
+                const nodeLoc = node.properties.loc;
+                
+                // FIXED: Check if the node CONTAINS any of the actually changed lines
+                const nodeContainsChanges = snippet.location.actualChangedLines?.some(changedLine => 
+                    changedLine >= nodeLoc.start.line && changedLine <= nodeLoc.end.line
+                ) || false;
+                
+                // LEGACY: If actualChangedLines is not available, fall back to range check
+                const legacyOverlap = !snippet.location.actualChangedLines && 
+                    !(snippet.location.endLine < nodeLoc.start.line || snippet.location.startLine > nodeLoc.end.line);
+                
+                if (nodeContainsChanges || legacyOverlap) {
+                    result.push(node.id);
+                    Logger.debug(`Node ${node.name} (${node.id}) contains changes at lines ${nodeLoc.start.line}-${nodeLoc.end.line}`);
+                }
+            }
+        } catch (error) {
+            Logger.error(`Error finding affected nodes for ${filePath}:`, error);
+        }
+        
+        return result;
+    }
+
+    /**
+     * FIXED: Normalize file paths for consistent comparison
+     */
+    private normalizeFilePath(filePath: string): string {
+        try {
+            // Use workspace-relative path if possible
+            if (vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0) {
+                const workspaceRoot = vscode.workspace.workspaceFolders[0].uri.fsPath;
+                
+                if (path.isAbsolute(filePath)) {
+                    const relativePath = path.relative(workspaceRoot, filePath);
+                    if (!relativePath.startsWith('..')) {
+                        return relativePath.replace(/\\/g, '/');
+                    }
+                }
+            }
+            
+            return path.normalize(filePath).replace(/\\/g, '/');
+        } catch (error) {
+            Logger.debug(`Error normalizing path ${filePath}:`, error);
+            return filePath.replace(/\\/g, '/');
+        }
+    }
+
+    /**
+     * FIXED: Check if two file paths refer to the same file with better comparison
+     */
+    private pathsMatch(path1: string, path2: string): boolean {
+        if (!path1 || !path2) {
+            return false;
+        }
+        
+        try {
+            const normalized1 = this.normalizeFilePath(path1);
+            const normalized2 = this.normalizeFilePath(path2);
+            
+            // Direct match
+            if (normalized1 === normalized2) {
+                return true;
+            }
+            
+            // Check if one is a suffix of the other (handle relative vs absolute paths)
+            return normalized1.endsWith(normalized2) || normalized2.endsWith(normalized1);
+        } catch (error) {
+            Logger.debug(`Error comparing paths ${path1} and ${path2}:`, error);
+            return path1 === path2;
+        }
+    }
+
+    /**
+     * Get file language with proper error handling
      */
     private getFileLanguage(filePath: string): string {
         try {
@@ -126,7 +299,7 @@ export class ChangeAnalyzer {
     }
 
     /**
-     * Check if a language is supported by SIKG - FIXED
+     * Check if a language is supported by SIKG
      */
     private isSupportedLanguage(language: string): boolean {
         const supportedLanguages = [
@@ -142,7 +315,7 @@ export class ChangeAnalyzer {
     }
 
     /**
-     * Determine if a file should be skipped during analysis - ENHANCED
+     * Determine if a file should be skipped during analysis
      */
     private shouldSkipFile(filePath: string): boolean {
         try {
@@ -172,104 +345,7 @@ export class ChangeAnalyzer {
     }
 
     /**
-     * Extract modified code snippets from a file change
-     */
-    private async extractModifiedSnippets(fileChange: FileChange): Promise<CodeSnippet[]> {
-        const result: CodeSnippet[] = [];
-        
-        try {
-            // Get the diff details from git service
-            const diffDetail = await this.gitService.getDiffDetails(fileChange.filePath);
-            
-            if (!diffDetail) {
-                return result;
-            }
-            
-            // Process each hunk in the diff
-            for (const hunk of diffDetail.hunks) {
-                // Extract before and after code
-                const before = hunk.lines
-                    .filter(line => line.type === 'delete' || line.type === 'context')
-                    .map(line => line.content)
-                    .join('\n');
-                    
-                const after = hunk.lines
-                    .filter(line => line.type === 'add' || line.type === 'context')
-                    .map(line => line.content)
-                    .join('\n');
-                
-                // Calculate the number of changed lines
-                const linesChanged = hunk.lines.filter(line => 
-                    line.type === 'add' || line.type === 'delete'
-                ).length;
-                
-                // Create the code snippet
-                result.push({
-                    before,
-                    after,
-                    linesChanged,
-                    location: {
-                        startLine: hunk.newStart,
-                        endLine: hunk.newStart + hunk.newLines - 1
-                    }
-                });
-            }
-            
-        } catch (error) {
-            Logger.error(`Error extracting modified snippets for ${fileChange.filePath}:`, error);
-        }
-        
-        return result;
-    }
-
-    /**
-     * Find nodes in the SIKG that correspond to the changed code
-     */
-    private async findAffectedNodes(filePath: string, location: { startLine: number, endLine: number }): Promise<string[]> {
-        const result: string[] = [];
-        
-        try {
-            // Get all code nodes
-            const codeNodes = this.sikgManager.getCodeNodes();
-            
-            // Find nodes that match the file path and have an overlapping location
-            for (const node of codeNodes) {
-                if (this.pathsMatch(node.filePath, filePath) && node.properties.loc) {
-                    const nodeLoc = node.properties.loc;
-                    
-                    // Check if the locations overlap
-                    if (!(location.endLine < nodeLoc.start.line || location.startLine > nodeLoc.end.line)) {
-                        result.push(node.id);
-                    }
-                }
-            }
-        } catch (error) {
-            Logger.error(`Error finding affected nodes for ${filePath}:`, error);
-        }
-        
-        return result;
-    }
-
-    /**
-     * Check if two file paths refer to the same file
-     */
-    private pathsMatch(path1: string, path2: string): boolean {
-        try {
-            // Normalize both paths
-            const normalized1 = path.resolve(path1).toLowerCase();
-            const normalized2 = path.resolve(path2).toLowerCase();
-            
-            return normalized1 === normalized2 || 
-                   normalized1.endsWith(normalized2) || 
-                   normalized2.endsWith(normalized1);
-        } catch (error) {
-            Logger.debug(`Error comparing paths ${path1} and ${path2}:`, error);
-            return path1 === path2;
-        }
-    }
-
-    /**
-     * Classify the type of change based on before and after code - ENHANCED with language support
+     * Classify the type of change based on before and after code
      */
     private async classifyChangeType(
         beforeCode: string,
@@ -502,6 +578,7 @@ export class ChangeAnalyzer {
     }
 }
 
+// FIXED: Enhanced interface for precise change tracking
 interface FileChange {
     filePath: string;
     changeType: 'add' | 'modify' | 'delete';
@@ -514,5 +591,6 @@ interface CodeSnippet {
     location: {
         startLine: number;
         endLine: number;
+        actualChangedLines?: number[]; // ADDED: Track exactly which lines changed
     };
 }
