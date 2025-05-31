@@ -1,7 +1,7 @@
 {
   "name": "vscode-sikg",
   "displayName": "SIKG - Semantic Impact Knowledge Graph",
-  "description": "Intelligently select test cases based on semantic change impact analysis",
+  "description": "Intelligently select test cases based on semantic change impact analysis with reinforcement learning",
   "version": "0.1.0",
   "publisher": "sikg",
   "engines": {
@@ -9,7 +9,17 @@
   },
   "categories": [
     "Testing",
+    "Machine Learning",
     "Other"
+  ],
+  "keywords": [
+    "testing",
+    "machine learning",
+    "reinforcement learning",
+    "test prioritization",
+    "code analysis",
+    "semantic analysis",
+    "knowledge graph"
   ],
   "activationEvents": [
     "onStartupFinished"
@@ -43,6 +53,26 @@
         "icon": "$(list-flat)"
       },
       {
+        "command": "sikg.showLearningReport",
+        "title": "SIKG: Show Learning Report",
+        "icon": "$(graph-line)"
+      },
+      {
+        "command": "sikg.resetLearning",
+        "title": "SIKG: Reset Learning Data",
+        "icon": "$(clear-all)"
+      },
+      {
+        "command": "sikg.exportLearningData",
+        "title": "SIKG: Export Learning Data",
+        "icon": "$(export)"
+      },
+      {
+        "command": "sikg.importLearningData",
+        "title": "SIKG: Import Learning Data",
+        "icon": "$(import)"
+      },
+      {
         "command": "sikg.diagnoseLangaugeIssues",
         "title": "SIKG: Diagnose Language Issues",
         "icon": "$(search)"
@@ -69,6 +99,12 @@
           "name": "Test Impact Analysis",
           "type": "webview",
           "icon": "$(test-view-icon)"
+        },
+        {
+          "id": "sikgLearningView",
+          "name": "Learning Progress",
+          "type": "webview",
+          "icon": "$(graph-line)"
         }
       ]
     },
@@ -83,6 +119,11 @@
           "command": "sikg.runPrioritizedTests",
           "when": "view == sikgView",
           "group": "navigation"
+        },
+        {
+          "command": "sikg.showLearningReport",
+          "when": "view == sikgLearningView",
+          "group": "navigation"
         }
       ],
       "commandPalette": [
@@ -93,11 +134,27 @@
         {
           "command": "sikg.fixLanguageIssues",
           "when": "true"
+        },
+        {
+          "command": "sikg.showLearningReport",
+          "when": "true"
+        },
+        {
+          "command": "sikg.resetLearning",
+          "when": "true"
+        },
+        {
+          "command": "sikg.exportLearningData",
+          "when": "true"
+        },
+        {
+          "command": "sikg.importLearningData",
+          "when": "true"
         }
       ]
     },
     "configuration": {
-      "title": "SIKG",
+      "title": "SIKG Configuration",
       "properties": {
         "sikg.logLevel": {
           "type": "string",
@@ -231,6 +288,370 @@
             "go"
           ],
           "description": "Programming languages supported by SIKG"
+        },
+        "sikg.reinforcementLearning.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable reinforcement learning for adaptive test prioritization"
+        },
+        "sikg.reinforcementLearning.learningRate": {
+          "type": "number",
+          "default": 0.01,
+          "minimum": 0.001,
+          "maximum": 1.0,
+          "description": "Learning rate for reinforcement learning algorithm"
+        },
+        "sikg.reinforcementLearning.discountFactor": {
+          "type": "number",
+          "default": 0.95,
+          "minimum": 0.1,
+          "maximum": 0.99,
+          "description": "Discount factor (gamma) for future rewards in MDP"
+        },
+        "sikg.reinforcementLearning.explorationRate": {
+          "type": "number",
+          "default": 0.1,
+          "minimum": 0.01,
+          "maximum": 0.5,
+          "description": "Initial exploration rate for epsilon-greedy policy"
+        },
+        "sikg.reinforcementLearning.updateFrequency": {
+          "type": "number",
+          "default": 10,
+          "minimum": 1,
+          "maximum": 100,
+          "description": "Number of episodes between policy updates"
+        },
+        "sikg.reinforcementLearning.policyType": {
+          "type": "string",
+          "enum": [
+            "epsilon-greedy",
+            "ucb",
+            "softmax",
+            "greedy"
+          ],
+          "default": "epsilon-greedy",
+          "description": "Policy type for action selection"
+        },
+        "sikg.reinforcementLearning.temperature": {
+          "type": "number",
+          "default": 1.0,
+          "minimum": 0.1,
+          "maximum": 5.0,
+          "description": "Temperature parameter for softmax policy"
+        },
+        "sikg.reinforcementLearning.ucbConstant": {
+          "type": "number",
+          "default": 2.0,
+          "minimum": 0.1,
+          "maximum": 10.0,
+          "description": "Confidence bound constant for UCB policy"
+        },
+        "sikg.reinforcementLearning.weightUpdateStrategy": {
+          "type": "string",
+          "enum": [
+            "gradient_based",
+            "reward_based",
+            "error_based",
+            "adaptive"
+          ],
+          "default": "gradient_based",
+          "description": "Strategy for updating graph edge weights based on feedback"
+        },
+        "sikg.reinforcementLearning.momentum": {
+          "type": "number",
+          "default": 0.9,
+          "minimum": 0.0,
+          "maximum": 0.99,
+          "description": "Momentum factor for weight updates"
+        },
+        "sikg.reinforcementLearning.rewardShaping": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable reward shaping for better learning convergence"
+        },
+        "sikg.reinforcementLearning.convergenceThreshold": {
+          "type": "number",
+          "default": 0.01,
+          "minimum": 0.001,
+          "maximum": 0.1,
+          "description": "Variance threshold for determining convergence"
+        },
+        "sikg.reinforcementLearning.maxEpisodes": {
+          "type": "number",
+          "default": 10000,
+          "minimum": 100,
+          "maximum": 100000,
+          "description": "Maximum number of learning episodes"
+        },
+        "sikg.reinforcementLearning.autoPersist": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically persist learning data between sessions"
+        },
+        "sikg.reinforcementLearning.stateFeatures": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "changeComplexity",
+              "changeSemanticTypes", 
+              "changeScope",
+              "historicalAccuracy",
+              "recentTrend",
+              "failureRate",
+              "testCoverage",
+              "testSuiteSize",
+              "averageTestTime",
+              "projectSize",
+              "codeChurn",
+              "complexity",
+              "graphDensity",
+              "graphCentrality",
+              "testCodeRatio",
+              "timeOfDay",
+              "dayOfWeek",
+              "commitFrequency"
+            ]
+          },
+          "default": [
+            "changeComplexity",
+            "historicalAccuracy",
+            "testCoverage",
+            "codeChurn",
+            "graphDensity",
+            "projectSize"
+          ],
+          "description": "State features to use for reinforcement learning"
+        },
+        "sikg.reinforcementLearning.rewardWeights": {
+          "type": "object",
+          "properties": {
+            "accuracy": {
+              "type": "number",
+              "default": 0.2,
+              "minimum": 0,
+              "maximum": 1
+            },
+            "precision": {
+              "type": "number", 
+              "default": 0.2,
+              "minimum": 0,
+              "maximum": 1
+            },
+            "recall": {
+              "type": "number",
+              "default": 0.2, 
+              "minimum": 0,
+              "maximum": 1
+            },
+            "f1Score": {
+              "type": "number",
+              "default": 0.3,
+              "minimum": 0,
+              "maximum": 1
+            },
+            "efficiency": {
+              "type": "number",
+              "default": 0.1,
+              "minimum": 0,
+              "maximum": 1
+            },
+            "falsePositivePenalty": {
+              "type": "number",
+              "default": 0.3,
+              "minimum": 0,
+              "maximum": 1
+            },
+            "falseNegativePenalty": {
+              "type": "number",
+              "default": 0.4,
+              "minimum": 0,
+              "maximum": 1
+            }
+          },
+          "default": {
+            "accuracy": 0.2,
+            "precision": 0.2,
+            "recall": 0.2,
+            "f1Score": 0.3,
+            "efficiency": 0.1,
+            "falsePositivePenalty": 0.3,
+            "falseNegativePenalty": 0.4
+          },
+          "description": "Weights for different components of the reward function"
+        },
+        "sikg.reinforcementLearning.relationshipWeights": {
+          "type": "object",
+          "properties": {
+            "CALLS": {
+              "type": "number",
+              "default": 0.9,
+              "minimum": 0.1,
+              "maximum": 1.0
+            },
+            "USES": {
+              "type": "number",
+              "default": 0.8,
+              "minimum": 0.1,
+              "maximum": 1.0
+            },
+            "INHERITS_FROM": {
+              "type": "number",
+              "default": 0.9,
+              "minimum": 0.1,
+              "maximum": 1.0
+            },
+            "DEPENDS_ON": {
+              "type": "number",
+              "default": 0.7,
+              "minimum": 0.1,
+              "maximum": 1.0
+            },
+            "BELONGS_TO": {
+              "type": "number",
+              "default": 0.8,
+              "minimum": 0.1,
+              "maximum": 1.0
+            },
+            "TESTS": {
+              "type": "number",
+              "default": 1.0,
+              "minimum": 0.1,
+              "maximum": 1.0
+            },
+            "IS_TESTED_BY": {
+              "type": "number",
+              "default": 1.0,
+              "minimum": 0.1,
+              "maximum": 1.0
+            },
+            "MODIFIES": {
+              "type": "number",
+              "default": 0.9,
+              "minimum": 0.1,
+              "maximum": 1.0
+            },
+            "IMPORTS": {
+              "type": "number",
+              "default": 0.6,
+              "minimum": 0.1,
+              "maximum": 1.0
+            }
+          },
+          "default": {
+            "CALLS": 0.9,
+            "USES": 0.8,
+            "INHERITS_FROM": 0.9,
+            "DEPENDS_ON": 0.7,
+            "BELONGS_TO": 0.8,
+            "TESTS": 1.0,
+            "IS_TESTED_BY": 1.0,
+            "MODIFIES": 0.9,
+            "IMPORTS": 0.6
+          },
+          "description": "Initial weights for different relationship types in the knowledge graph"
+        },
+        "sikg.reinforcementLearning.semanticTypeWeights": {
+          "type": "object",
+          "properties": {
+            "BUG_FIX": {
+              "type": "number",
+              "default": 0.8,
+              "minimum": 0.1,
+              "maximum": 1.0
+            },
+            "FEATURE_ADDITION": {
+              "type": "number",
+              "default": 0.7,
+              "minimum": 0.1,
+              "maximum": 1.0
+            },
+            "REFACTORING_SIGNATURE": {
+              "type": "number",
+              "default": 0.9,
+              "minimum": 0.1,
+              "maximum": 1.0
+            },
+            "REFACTORING_LOGIC": {
+              "type": "number",
+              "default": 0.5,
+              "minimum": 0.1,
+              "maximum": 1.0
+            },
+            "DEPENDENCY_UPDATE": {
+              "type": "number",
+              "default": 0.6,
+              "minimum": 0.1,
+              "maximum": 1.0
+            },
+            "PERFORMANCE_OPT": {
+              "type": "number",
+              "default": 0.4,
+              "minimum": 0.1,
+              "maximum": 1.0
+            },
+            "UNKNOWN": {
+              "type": "number",
+              "default": 0.5,
+              "minimum": 0.1,
+              "maximum": 1.0
+            }
+          },
+          "default": {
+            "BUG_FIX": 0.8,
+            "FEATURE_ADDITION": 0.7,
+            "REFACTORING_SIGNATURE": 0.9,
+            "REFACTORING_LOGIC": 0.5,
+            "DEPENDENCY_UPDATE": 0.6,
+            "PERFORMANCE_OPT": 0.4,
+            "UNKNOWN": 0.5
+          },
+          "description": "Initial weights for different semantic change types"
+        },
+        "sikg.visualizations.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable graph visualizations"
+        },
+        "sikg.visualizations.maxNodes": {
+          "type": "number",
+          "default": 500,
+          "minimum": 50,
+          "maximum": 2000,
+          "description": "Maximum number of nodes to display in graph visualization"
+        },
+        "sikg.performance.enableCaching": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable caching for improved performance"
+        },
+        "sikg.performance.maxCacheSize": {
+          "type": "number",
+          "default": 1000,
+          "minimum": 100,
+          "maximum": 10000,
+          "description": "Maximum number of items to keep in cache"
+        },
+        "sikg.performance.backgroundProcessing": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable background processing for graph building and analysis"
+        },
+        "sikg.experimental.features": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "multiObjectiveOptimization",
+              "transferLearning", 
+              "onlineLearning",
+              "advancedFeatureExtraction",
+              "crossProjectLearning"
+            ]
+          },
+          "default": [],
+          "description": "Enable experimental features (use with caution)"
         }
       }
     }
@@ -241,7 +662,9 @@
     "watch": "tsc -watch -p ./",
     "pretest": "npm run compile",
     "test": "node ./out/test/runTest.js",
-    "package": "vsce package"
+    "package": "vsce package",
+    "lint": "eslint src --ext ts",
+    "lint:fix": "eslint src --ext ts --fix"
   },
   "devDependencies": {
     "@types/glob": "^7.2.0",
@@ -250,6 +673,9 @@
     "@types/vscode": "^1.70.0",
     "@vscode/test-electron": "^2.3.0",
     "@vscode/vsce": "^2.19.0",
+    "@typescript-eslint/eslint-plugin": "^5.0.0",
+    "@typescript-eslint/parser": "^5.0.0",
+    "eslint": "^8.0.0",
     "glob": "^8.1.0",
     "mocha": "^10.2.0",
     "typescript": "^5.0.4"
@@ -257,5 +683,19 @@
   "dependencies": {
     "crypto": "^1.0.1",
     "d3": "^7.9.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-org/vscode-sikg.git"
+  },
+  "homepage": "https://github.com/your-org/vscode-sikg#readme",
+  "bugs": {
+    "url": "https://github.com/your-org/vscode-sikg/issues"
+  },
+  "license": "MIT",
+  "icon": "images/sikg-icon.png",
+  "galleryBanner": {
+    "color": "#1e1e1e",
+    "theme": "dark"
   }
 }

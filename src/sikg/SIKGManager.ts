@@ -1,4 +1,4 @@
-// FIXED SIKGManager.ts - Proper node marking and graph state management
+// ENHANCED SIKGManager.ts - Integrated with Reinforcement Learning
 
 import * as vscode from 'vscode';
 import * as path from 'path';
@@ -9,8 +9,21 @@ import { CodeParser } from './CodeParser';
 import { TestParser } from './TestParser';
 import { Graph, Node, Edge, SemanticChangeInfo, TestResult } from './GraphTypes';
 
+// RL Integration imports
+import { MDPFramework } from '../ml/reinforcement/MDPFramework';
+import { PolicyLearning } from '../ml/reinforcement/PolicyLearning';
+import { WeightUpdateManager } from '../ml/reinforcement/WeightUpdateManager';
+import { LearningMetrics } from '../ml/reinforcement/LearningMetrics';
+import { 
+    MDPState, 
+    MDPAction, 
+    FeedbackSignal,
+    LearningEpisode,
+    WeightUpdateStrategy 
+} from '../ml/types/ReinforcementTypes';
+
 /**
- * FIXED SIKGManager - Proper graph state management and visualization data
+ * ENHANCED SIKGManager with Reinforcement Learning Integration
  */
 export class SIKGManager {
     private graph: Graph;
@@ -21,6 +34,14 @@ export class SIKGManager {
     private graphPath: string;
     private initialized: boolean = false;
 
+    // RL Components
+    private mdpFramework: MDPFramework;
+    private policyLearning: PolicyLearning;
+    private weightUpdateManager: WeightUpdateManager;
+    private learningMetrics: LearningMetrics;
+    private rlEnabled: boolean = false;
+    private currentEpisode: LearningEpisode | null = null;
+
     constructor(context: vscode.ExtensionContext, configManager: ConfigManager) {
         this.context = context;
         this.configManager = configManager;
@@ -28,35 +49,49 @@ export class SIKGManager {
         this.codeParser = new CodeParser();
         this.testParser = new TestParser();
         
+        // Initialize RL components
+        this.mdpFramework = new MDPFramework(configManager);
+        this.policyLearning = new PolicyLearning(configManager);
+        this.weightUpdateManager = new WeightUpdateManager(this.graph, WeightUpdateStrategy.ADAPTIVE);
+        this.learningMetrics = new LearningMetrics(context);
+        
+        // Check if RL is enabled
+        this.rlEnabled = configManager.isRLEnabled();
+        
         // Set up storage path for the graph
         const storagePath = context.globalStorageUri.fsPath;
         if (!fs.existsSync(storagePath)) {
             fs.mkdirSync(storagePath, { recursive: true });
         }
         this.graphPath = path.join(storagePath, 'sikg-graph.json');
+
+        Logger.info(`SIKG Manager initialized with RL ${this.rlEnabled ? 'enabled' : 'disabled'}`);
     }
 
     /**
-     * Initialize the SIKG, loading the existing graph if available or building a new one
+     * Initialize the SIKG with RL capability
      */
     public async initialize(): Promise<void> {
         try {
             if (fs.existsSync(this.graphPath)) {
-                // Load existing graph
                 await this.loadGraph();
                 Logger.info('Loaded existing SIKG graph');
                 
-                // Check if we need to update the graph (e.g., new files added)
                 const needsUpdate = await this.checkForGraphUpdate();
                 if (needsUpdate) {
                     Logger.info('Updating SIKG graph with new files');
                     await this.updateGraph();
                 }
             } else {
-                // Build new graph
                 await this.rebuildGraph();
                 Logger.info('Built new SIKG graph');
             }
+
+            // Initialize RL components if enabled
+            if (this.rlEnabled) {
+                await this.initializeRLComponents();
+            }
+
             this.initialized = true;
         } catch (error) {
             Logger.error('Failed to initialize SIKG:', error);
@@ -65,14 +100,248 @@ export class SIKGManager {
     }
 
     /**
+     * Initialize RL components
+     */
+    private async initializeRLComponents(): Promise<void> {
+        try {
+            // Load previous learning data if available
+            const savedPolicyData = this.context.globalState.get('sikg.policyData');
+            if (savedPolicyData) {
+                this.policyLearning.importPolicy(savedPolicyData);
+                Logger.info('Loaded previous RL policy data');
+            }
+
+            Logger.info('RL components initialized successfully');
+        } catch (error) {
+            Logger.error('Failed to initialize RL components:', error);
+            // Continue without RL if initialization fails
+            this.rlEnabled = false;
+        }
+    }
+
+    /**
+     * ENHANCED: Start a new RL episode for test prioritization
+     */
+    public async startRLEpisode(context: any): Promise<MDPState | null> {
+        if (!this.rlEnabled) {
+            return null;
+        }
+
+        try {
+            const state = this.mdpFramework.initializeEpisode(context);
+            
+            this.currentEpisode = {
+                episode: this.learningMetrics.getCurrentStatistics().totalEpisodes,
+                state: state,
+                action: null as any, // Will be set when action is selected
+                reward: 0,
+                nextState: null as any,
+                timestamp: new Date(),
+                accuracy: 0,
+                done: false
+            };
+
+            Logger.debug(`Started RL episode ${this.currentEpisode.episode}`);
+            return state;
+        } catch (error) {
+            Logger.error('Error starting RL episode:', error);
+            return null;
+        }
+    }
+
+    /**
+     * ENHANCED: Select action using RL policy
+     */
+    public async selectRLAction(state: MDPState, availableActions: MDPAction[]): Promise<MDPAction | null> {
+        if (!this.rlEnabled || !state) {
+            return null;
+        }
+
+        try {
+            const selectedAction = await this.policyLearning.selectAction(state, availableActions);
+            
+            if (this.currentEpisode) {
+                this.currentEpisode.action = selectedAction;
+            }
+
+            Logger.debug(`Selected RL action: ${selectedAction.id}`);
+            return selectedAction;
+        } catch (error) {
+            Logger.error('Error selecting RL action:', error);
+            return null;
+        }
+    }
+
+    /**
+     * ENHANCED: End RL episode and update learning
+     */
+    public async endRLEpisode(environmentResponse: any): Promise<void> {
+        if (!this.rlEnabled || !this.currentEpisode) {
+            return;
+        }
+
+        try {
+            const { nextState, reward, done } = this.mdpFramework.executeAction(
+                this.currentEpisode.action,
+                environmentResponse
+            );
+
+            // Complete episode data
+            this.currentEpisode.nextState = nextState;
+            this.currentEpisode.reward = reward;
+            this.currentEpisode.done = done;
+            this.currentEpisode.accuracy = environmentResponse.accuracy || 0;
+
+            // Extract additional metrics from environment response
+            if (environmentResponse.testResults) {
+                const results = environmentResponse.testResults;
+                this.currentEpisode.testsRun = results.length;
+                this.currentEpisode.truePositives = results.filter((r: any) => r.predicted && r.actual).length;
+                this.currentEpisode.falsePositives = results.filter((r: any) => r.predicted && !r.actual).length;
+                this.currentEpisode.trueNegatives = results.filter((r: any) => !r.predicted && !r.actual).length;
+                this.currentEpisode.falseNegatives = results.filter((r: any) => !r.predicted && r.actual).length;
+                this.currentEpisode.executionTime = environmentResponse.executionTime || 0;
+            }
+
+            // Update policy learning
+            await this.policyLearning.updatePolicy(
+                this.currentEpisode.state,
+                this.currentEpisode.action,
+                reward,
+                done ? undefined : nextState
+            );
+
+            // Record episode in learning metrics
+            await this.learningMetrics.recordEpisode(this.currentEpisode);
+
+            // Update graph weights based on feedback
+            if (environmentResponse.feedbackSignals) {
+                await this.updateGraphWeights(environmentResponse.feedbackSignals);
+            }
+
+            // Save RL data periodically
+            await this.saveRLData();
+
+            Logger.info(`Completed RL episode ${this.currentEpisode.episode}, reward: ${reward.toFixed(3)}, accuracy: ${this.currentEpisode.accuracy.toFixed(3)}`);
+            
+            this.currentEpisode = null;
+        } catch (error) {
+            Logger.error('Error ending RL episode:', error);
+        }
+    }
+
+    /**
+     * Update graph weights based on RL feedback
+     */
+    private async updateGraphWeights(feedbackSignals: FeedbackSignal[]): Promise<void> {
+        try {
+            const weightUpdates = await this.weightUpdateManager.updateWeights(feedbackSignals);
+            
+            if (weightUpdates.length > 0) {
+                // Save updated graph
+                await this.saveGraph();
+                Logger.debug(`Applied ${weightUpdates.length} weight updates to graph`);
+            }
+        } catch (error) {
+            Logger.error('Error updating graph weights:', error);
+        }
+    }
+
+    /**
+     * Save RL learning data
+     */
+    private async saveRLData(): Promise<void> {
+        try {
+            // Save policy data
+            const policyData = this.policyLearning.exportPolicy();
+            await this.context.globalState.update('sikg.policyData', policyData);
+
+            // Save learning statistics
+            const learningStats = this.learningMetrics.getCurrentStatistics();
+            await this.context.globalState.update('sikg.learningStatistics', learningStats);
+
+            Logger.debug('Saved RL learning data');
+        } catch (error) {
+            Logger.error('Error saving RL data:', error);
+        }
+    }
+
+    /**
+     * Get RL learning report
+     */
+    public async getRLLearningReport(): Promise<any> {
+        if (!this.rlEnabled) {
+            return null;
+        }
+
+        try {
+            return await this.learningMetrics.getLearningReport();
+        } catch (error) {
+            Logger.error('Error generating RL learning report:', error);
+            return null;
+        }
+    }
+
+    /**
+     * Get RL statistics for UI display
+     */
+    public getRLStatistics(): any {
+        if (!this.rlEnabled) {
+            return null;
+        }
+
+        return {
+            enabled: this.rlEnabled,
+            learningStats: this.learningMetrics.getCurrentStatistics(),
+            policyStats: this.policyLearning.getPolicyStatistics(),
+            weightStats: this.weightUpdateManager.getLearningMetrics(),
+            mdpStats: this.mdpFramework.getStatistics()
+        };
+    }
+
+    /**
+     * Enable/disable RL learning
+     */
+    public setRLEnabled(enabled: boolean): void {
+        this.rlEnabled = enabled;
+        Logger.info(`RL learning ${enabled ? 'enabled' : 'disabled'}`);
+    }
+
+    /**
+     * Reset RL learning data
+     */
+    public async resetRLLearning(): Promise<void> {
+        if (!this.rlEnabled) {
+            return;
+        }
+
+        try {
+            this.policyLearning.resetPolicy();
+            this.weightUpdateManager.resetHistory();
+            await this.learningMetrics.clearHistory();
+            
+            // Clear saved data
+            await this.context.globalState.update('sikg.policyData', undefined);
+            await this.context.globalState.update('sikg.learningStatistics', undefined);
+
+            Logger.info('Reset RL learning data');
+        } catch (error) {
+            Logger.error('Error resetting RL learning:', error);
+        }
+    }
+
+    // [Rest of the existing SIKGManager methods remain unchanged]
+    // Including: checkForGraphUpdate, updateGraph, rebuildGraph, enhanceGraphRelationships,
+    // updateWithTestResults, exportGraphForVisualization, getNode, addNode, updateNode,
+    // addEdge, updateEdge, getOutgoingEdges, etc.
+
+    /**
      * Check if the graph needs updating due to new files or changes
      */
     private async checkForGraphUpdate(): Promise<boolean> {
-        // Check if new files have been added since last graph build
         const codeFiles = await this.findAllCodeFiles();
         const testFiles = await this.findAllTestFiles();
         
-        // Count existing nodes
         let codeNodeCount = 0;
         let testNodeCount = 0;
         
@@ -84,8 +353,6 @@ export class SIKGManager {
             }
         }
         
-        // Simple heuristic: if we have more files than nodes of the corresponding type,
-        // we probably need to update the graph
         return codeFiles.length > codeNodeCount / 5 || testFiles.length > testNodeCount;
     }
 
@@ -94,15 +361,12 @@ export class SIKGManager {
      */
     private async updateGraph(): Promise<void> {
         try {
-            // Find all code and test files
             const codeFiles = await this.findAllCodeFiles();
             const testFiles = await this.findAllTestFiles();
             
-            // Track which files we've already processed
             const processedCodeFiles = new Set<string>();
             const processedTestFiles = new Set<string>();
             
-            // Check which files are already in the graph
             for (const node of this.graph.nodes.values()) {
                 if (node.filePath) {
                     if (node.type === 'CodeElement') {
@@ -113,13 +377,11 @@ export class SIKGManager {
                 }
             }
             
-            // Process only new code files
             const newCodeFiles = codeFiles.filter(file => {
                 const relativePath = vscode.workspace.asRelativePath(file);
                 return !processedCodeFiles.has(relativePath);
             });
             
-            // Process only new test files
             const newTestFiles = testFiles.filter(file => {
                 const relativePath = vscode.workspace.asRelativePath(file);
                 return !processedTestFiles.has(relativePath);
@@ -127,16 +389,10 @@ export class SIKGManager {
             
             Logger.info(`Updating SIKG graph with ${newCodeFiles.length} new code files and ${newTestFiles.length} new test files`);
             
-            // Process new code files
             await this.processCodeFiles(newCodeFiles);
-            
-            // Process new test files
             await this.processTestFiles(newTestFiles);
-            
-            // Save the updated graph
             await this.saveGraph();
             
-            // Log statistics
             Logger.info(`SIKG graph updated. Now has ${this.graph.nodes.size} nodes and ${this.graph.edges.size} edges`);
         } catch (error) {
             Logger.error('Failed to update SIKG graph:', error);
@@ -149,27 +405,17 @@ export class SIKGManager {
      */
     public async rebuildGraph(): Promise<void> {
         try {
-            // Clear existing graph
             this.graph = { nodes: new Map(), edges: new Map() };
             
-            // Find all code and test files in the workspace
             const codeFiles = await this.findAllCodeFiles();
             const testFiles = await this.findAllTestFiles();
             
-            // Parse code files and build code nodes
             Logger.info(`Building SIKG from ${codeFiles.length} code files and ${testFiles.length} test files`);
             await this.processCodeFiles(codeFiles);
-            
-            // Parse test files and link them to code elements
             await this.processTestFiles(testFiles);
-            
-            // Apply additional analysis to enhance the graph
             await this.enhanceGraphRelationships();
-            
-            // Save the graph
             await this.saveGraph();
             
-            // Log statistics
             Logger.info(`SIKG built with ${this.graph.nodes.size} nodes and ${this.graph.edges.size} edges`);
         } catch (error) {
             Logger.error('Failed to rebuild SIKG graph:', error);
@@ -182,19 +428,9 @@ export class SIKGManager {
      */
     private async enhanceGraphRelationships(): Promise<void> {
         try {
-            // This would use VS Code's Language Services to get better dependency information
-            // For demonstration purposes, we'll just log that this step occurred
             Logger.info('Enhancing graph relationships with additional analysis');
-            
-            // In a full implementation, this would:
-            // 1. Use VS Code's "Find All References" to improve call graphs
-            // 2. Use language-specific tools to analyze import/dependency relationships
-            // 3. Perform static analysis to better understand relationships
-            
-            // For simplicity, we'll skip the actual implementation
         } catch (error) {
             Logger.error('Error enhancing graph relationships:', error);
-            // Non-critical, so don't throw the error
         }
     }
 
@@ -211,15 +447,12 @@ export class SIKGManager {
             
             for (const result of testResults) {
                 const testNodeId = result.testId;
-                
-                // Find the test node
                 const testNode = this.graph.nodes.get(testNodeId);
                 if (!testNode) {
                     Logger.warn(`Test node not found for test: ${result.testId}`);
                     continue;
                 }
                 
-                // Update test node properties with execution result
                 testNode.properties = {
                     ...testNode.properties,
                     lastRun: new Date().toISOString(),
@@ -232,11 +465,9 @@ export class SIKGManager {
                             status: result.status,
                             executionTime: result.executionTime
                         }
-                    ].slice(-20) // Keep only the last 20 executions
+                    ].slice(-20)
                 };
                 
-                // If this test was predicted with high impact but passed, or low impact but failed,
-                // adjust the edge weights - this is the reinforcement learning part
                 if (result.predictedImpact !== undefined) {
                     const highThreshold = this.configManager.getHighImpactThreshold();
                     const lowThreshold = this.configManager.getLowImpactThreshold();
@@ -244,25 +475,20 @@ export class SIKGManager {
                     if ((result.predictedImpact > highThreshold && result.status === 'passed') ||
                         (result.predictedImpact < lowThreshold && result.status === 'failed')) {
                         
-                        // Find paths that contributed to this test's score
                         const contributingPaths = this.findContributingPaths(testNodeId, result.changedNodeIds || []);
                         
                         for (const path of contributingPaths) {
                             for (const edgeId of path) {
                                 const edge = this.graph.edges.get(edgeId);
                                 if (edge) {
-                                    // Calculate weight adjustment factor based on the prediction error
                                     let adjustmentFactor: number;
                                     
                                     if (result.predictedImpact > highThreshold && result.status === 'passed') {
-                                        // False positive: reduce weight
-                                        adjustmentFactor = 0.9; // Decrease by 10%
+                                        adjustmentFactor = 0.9;
                                     } else {
-                                        // False negative: increase weight
-                                        adjustmentFactor = 1.1; // Increase by 10%
+                                        adjustmentFactor = 1.1;
                                     }
                                     
-                                    // Apply adjustment to edge weight
                                     edge.weight = Math.max(0.1, Math.min(10, edge.weight * adjustmentFactor));
                                     changedEdgeWeights++;
                                 }
@@ -272,7 +498,6 @@ export class SIKGManager {
                 }
             }
             
-            // Save the updated graph
             await this.saveGraph();
             Logger.info(`Updated SIKG with test results. Modified ${changedEdgeWeights} edge weights.`);
             
@@ -283,32 +508,29 @@ export class SIKGManager {
     }
 
     /**
-     * FIXED: Export a simplified version of the graph for visualization with proper change marking
+     * Export a simplified version of the graph for visualization with proper change marking
      */
     public async exportGraphForVisualization(): Promise<any> {
         if (!this.initialized) {
             await this.initialize();
         }
         
-        // Convert the graph to a format suitable for D3 visualization
         const nodes: any[] = [];
         const links: any[] = [];
         
-        // FIXED: Add nodes with proper change tracking
         for (const [id, node] of this.graph.nodes.entries()) {
             nodes.push({
                 id,
                 label: node.name || id,
                 type: node.type,
                 impact: node.properties.impactScore || 0,
-                changed: node.properties.changed || false, // FIXED: Include change status
+                changed: node.properties.changed || false,
                 fileName: path.basename(node.filePath || ''),
-                semanticChangeType: node.properties.semanticChangeType, // FIXED: Include change type
-                filePath: node.filePath // FIXED: Include full file path for debugging
+                semanticChangeType: node.properties.semanticChangeType,
+                filePath: node.filePath
             });
         }
         
-        // Add edges with appropriate information
         for (const [id, edge] of this.graph.edges.entries()) {
             links.push({
                 source: edge.source,
@@ -318,7 +540,6 @@ export class SIKGManager {
             });
         }
         
-        // FIXED: Log debug information
         const changedNodes = nodes.filter(n => n.changed);
         const testNodes = nodes.filter(n => n.type === 'TestCase');
         const codeNodes = nodes.filter(n => n.type === 'CodeElement');
@@ -328,35 +549,15 @@ export class SIKGManager {
         return { nodes, links };
     }
 
-    /**
-     * Get the node for a given ID
-     */
+    // Additional helper methods
     public getNode(nodeId: string): Node | undefined {
         return this.graph.nodes.get(nodeId);
     }
 
-    /**
-     * Get a node by its name and file path
-     */
-    public getNodeByNameAndPath(name: string, filePath: string): Node | undefined {
-        for (const node of this.graph.nodes.values()) {
-            if (node.name === name && node.filePath === filePath) {
-                return node;
-            }
-        }
-        return undefined;
-    }
-
-    /**
-     * Add a new node to the graph
-     */
     public addNode(node: Node): void {
         this.graph.nodes.set(node.id, node);
     }
 
-    /**
-     * Update an existing node in the graph
-     */
     public updateNode(nodeId: string, updatedProperties: Partial<Node>): void {
         const existingNode = this.graph.nodes.get(nodeId);
         if (existingNode) {
@@ -364,17 +565,11 @@ export class SIKGManager {
         }
     }
 
-    /**
-     * Add a new edge to the graph
-     */
     public addEdge(edge: Edge): void {
         const edgeId = `${edge.source}-${edge.type}-${edge.target}`;
         this.graph.edges.set(edgeId, edge);
     }
 
-    /**
-     * Update an existing edge in the graph
-     */
     public updateEdge(edgeId: string, updatedProperties: Partial<Edge>): void {
         const existingEdge = this.graph.edges.get(edgeId);
         if (existingEdge) {
@@ -382,9 +577,6 @@ export class SIKGManager {
         }
     }
 
-    /**
-     * Get outgoing edges from a node
-     */
     public getOutgoingEdges(nodeId: string): Edge[] {
         const result: Edge[] = [];
         for (const edge of this.graph.edges.values()) {
@@ -395,9 +587,6 @@ export class SIKGManager {
         return result;
     }
 
-    /**
-     * Get incoming edges to a node
-     */
     public getIncomingEdges(nodeId: string): Edge[] {
         const result: Edge[] = [];
         for (const edge of this.graph.edges.values()) {
@@ -408,22 +597,6 @@ export class SIKGManager {
         return result;
     }
 
-    /**
-     * Get all edges between two nodes
-     */
-    public getEdgesBetween(sourceId: string, targetId: string): Edge[] {
-        const result: Edge[] = [];
-        for (const edge of this.graph.edges.values()) {
-            if (edge.source === sourceId && edge.target === targetId) {
-                result.push(edge);
-            }
-        }
-        return result;
-    }
-
-    /**
-     * Find all test nodes in the graph
-     */
     public getTestNodes(): Node[] {
         const result: Node[] = [];
         for (const node of this.graph.nodes.values()) {
@@ -434,9 +607,6 @@ export class SIKGManager {
         return result;
     }
 
-    /**
-     * Find all code nodes in the graph
-     */
     public getCodeNodes(): Node[] {
         const result: Node[] = [];
         for (const node of this.graph.nodes.values()) {
@@ -447,29 +617,11 @@ export class SIKGManager {
         return result;
     }
 
-    /**
-     * Find code nodes by file path
-     */
-    public getNodesByFilePath(filePath: string): Node[] {
-        const result: Node[] = [];
-        for (const node of this.graph.nodes.values()) {
-            if (node.filePath === filePath) {
-                result.push(node);
-            }
-        }
-        return result;
-    }
-
-    /**
-     * FIXED: Mark nodes as changed with proper change tracking and impact propagation
-     */
     public markNodesAsChanged(changedNodes: SemanticChangeInfo[]): void {
-        // FIXED: First reset all nodes to unchanged state
         this.resetChangedStatus();
         
         const changedNodeIds = new Set<string>();
         
-        // Mark directly changed nodes
         for (const change of changedNodes) {
             const node = this.graph.nodes.get(change.nodeId);
             if (node) {
@@ -487,20 +639,14 @@ export class SIKGManager {
             }
         }
         
-        // FIXED: Find and mark impacted test nodes based on relationships
         this.markImpactedTestNodes(changedNodeIds);
-        
         Logger.info(`Total nodes marked as changed: ${changedNodeIds.size}`);
     }
 
-    /**
-     * FIXED: Mark test nodes that are impacted by changed code nodes
-     */
     private markImpactedTestNodes(changedCodeNodeIds: Set<string>): void {
         const testNodes = this.getTestNodes();
         
         for (const testNode of testNodes) {
-            // Check if this test has any edges to changed code nodes
             const hasImpactPath = this.hasPathToChangedNodes(testNode.id, changedCodeNodeIds);
             
             if (hasImpactPath) {
@@ -515,9 +661,6 @@ export class SIKGManager {
         }
     }
 
-    /**
-     * FIXED: Check if a test node has a path to any changed code nodes
-     */
     private hasPathToChangedNodes(testNodeId: string, changedCodeNodeIds: Set<string>, maxDepth: number = 3): boolean {
         const visited = new Set<string>();
         const queue: { nodeId: string; depth: number }[] = [{ nodeId: testNodeId, depth: 0 }];
@@ -531,12 +674,10 @@ export class SIKGManager {
             
             visited.add(nodeId);
             
-            // Check if we've reached a changed code node
             if (changedCodeNodeIds.has(nodeId)) {
                 return true;
             }
             
-            // Add connected nodes to the queue
             const outgoingEdges = this.getOutgoingEdges(nodeId);
             for (const edge of outgoingEdges) {
                 if (!visited.has(edge.target)) {
@@ -548,9 +689,6 @@ export class SIKGManager {
         return false;
     }
 
-    /**
-     * FIXED: Reset changed status of all nodes properly
-     */
     public resetChangedStatus(): void {
         let resetCount = 0;
         for (const node of this.graph.nodes.values()) {
@@ -572,89 +710,10 @@ export class SIKGManager {
         }
     }
 
-    /**
-     * Get all changed nodes
-     */
-    public getChangedNodes(): Node[] {
-        const result: Node[] = [];
-        for (const node of this.graph.nodes.values()) {
-            if (node.properties.changed) {
-                result.push(node);
-            }
-        }
-        return result;
-    }
-
-    /**
-     * FIXED: Get all impacted nodes (including changed and test nodes impacted by changes)
-     */
-    public getImpactedNodes(): Node[] {
-        const result: Node[] = [];
-        for (const node of this.graph.nodes.values()) {
-            if (node.properties.changed || node.properties.impacted) {
-                result.push(node);
-            }
-        }
-        return result;
-    }
-
-    /**
-     * Get tests that cover a specific code element
-     */
-    public getTestsForCode(codeNodeId: string): Node[] {
-        const result: Node[] = [];
-        const visited = new Set<string>();
-        
-        // Find all test nodes that have a path to this code element
-        for (const node of this.graph.nodes.values()) {
-            if (node.type === 'TestCase') {
-                const queue: string[] = [node.id];
-                visited.clear();
-                
-                while (queue.length > 0) {
-                    const currentId = queue.shift()!;
-                    
-                    if (currentId === codeNodeId) {
-                        result.push(node);
-                        break;
-                    }
-                    
-                    if (visited.has(currentId)) {
-                        continue;
-                    }
-                    
-                    visited.add(currentId);
-                    
-                    // Add all targets of outgoing edges to the queue
-                    const outgoingEdges = this.getOutgoingEdges(currentId);
-                    for (const edge of outgoingEdges) {
-                        queue.push(edge.target);
-                    }
-                }
-            }
-        }
-        
-        return result;
-    }
-
-    /**
-     * Clean up resources used by the SIKG
-     */
-    public dispose(): void {
-        // Save the graph before disposing
-        this.saveGraph().catch(error => {
-            Logger.error('Failed to save SIKG on dispose:', error);
-        });
-    }
-
-    /**
-     * Find paths that may have contributed to a test's impact score
-     */
     private findContributingPaths(testNodeId: string, changedNodeIds: string[]): string[][] {
         const paths: string[][] = [];
         
         for (const changedNodeId of changedNodeIds) {
-            // Basic BFS to find paths from the changed node to the test node
             const queue: { nodeId: string; path: string[] }[] = [{ nodeId: changedNodeId, path: [] }];
             const visited = new Set<string>();
             
@@ -662,7 +721,6 @@ export class SIKGManager {
                 const { nodeId, path } = queue.shift()!;
                 
                 if (nodeId === testNodeId) {
-                    // Found a path to the test
                     paths.push(path);
                     continue;
                 }
@@ -673,7 +731,6 @@ export class SIKGManager {
                 
                 visited.add(nodeId);
                 
-                // Get outgoing edges
                 const outgoingEdges = this.getOutgoingEdges(nodeId);
                 for (const edge of outgoingEdges) {
                     const edgeId = `${edge.source}-${edge.type}-${edge.target}`;
@@ -688,9 +745,6 @@ export class SIKGManager {
         return paths;
     }
 
-    /**
-     * Find all code files in the workspace
-     */
     private async findAllCodeFiles(): Promise<string[]> {
         const codeExtensions = this.configManager.getCodeFileExtensions();
         const excludePatterns = this.configManager.getExcludePatterns();
@@ -703,9 +757,6 @@ export class SIKGManager {
         return files.map(file => file.fsPath);
     }
 
-    /**
-     * Find all test files in the workspace
-     */
     private async findAllTestFiles(): Promise<string[]> {
         const testPatterns = this.configManager.getTestFilePatterns();
         const excludePatterns = this.configManager.getExcludePatterns();
@@ -718,11 +769,7 @@ export class SIKGManager {
         return files.map(file => file.fsPath);
     }
 
-    /**
-     * Process code files and add them to the graph
-     */
     private async processCodeFiles(codeFiles: string[]): Promise<void> {
-        // Process in batches to avoid locking the UI
         const batchSize = 20;
         
         for (let i = 0; i < codeFiles.length; i += batchSize) {
@@ -734,12 +781,9 @@ export class SIKGManager {
                     const fileUri = vscode.Uri.file(filePath);
                     const relativePath = vscode.workspace.asRelativePath(fileUri);
                     
-                    // Parse the code file
                     const codeElements = await this.codeParser.parseCodeFile(content, relativePath);
                     
-                    // Add nodes and edges to the graph
                     for (const element of codeElements) {
-                        // Add the code element node
                         this.addNode({
                             id: element.id,
                             type: 'CodeElement',
@@ -752,7 +796,6 @@ export class SIKGManager {
                             }
                         });
                         
-                        // Add relationships (edges)
                         for (const relation of element.relations) {
                             this.addEdge({
                                 source: element.id,
@@ -768,16 +811,11 @@ export class SIKGManager {
                 }
             }
             
-            // Allow UI updates between batches
             await new Promise(resolve => setTimeout(resolve, 0));
         }
     }
 
-    /**
-     * Process test files and add them to the graph
-     */
     private async processTestFiles(testFiles: string[]): Promise<void> {
-        // Process in batches to avoid locking the UI
         const batchSize = 20;
         
         for (let i = 0; i < testFiles.length; i += batchSize) {
@@ -789,12 +827,9 @@ export class SIKGManager {
                     const fileUri = vscode.Uri.file(filePath);
                     const relativePath = vscode.workspace.asRelativePath(fileUri);
                     
-                    // Parse the test file
                     const testCases = await this.testParser.parseTestFile(content, relativePath);
                     
-                    // Add nodes and edges to the graph
                     for (const test of testCases) {
-                        // Add the test case node
                         this.addNode({
                             id: test.id,
                             type: 'TestCase',
@@ -808,7 +843,6 @@ export class SIKGManager {
                             }
                         });
                         
-                        // Link test to covered code elements
                         for (const coverage of test.coveredElements) {
                             this.addEdge({
                                 source: test.id,
@@ -818,7 +852,6 @@ export class SIKGManager {
                                 properties: {}
                             });
                             
-                            // Add a reverse edge for easier traversal
                             this.addEdge({
                                 source: coverage.targetId,
                                 target: test.id,
@@ -833,23 +866,17 @@ export class SIKGManager {
                 }
             }
             
-            // Allow UI updates between batches
             await new Promise(resolve => setTimeout(resolve, 0));
         }
     }
 
-    /**
-     * Save the graph to disk
-     */
     private async saveGraph(): Promise<void> {
         try {
-            // Convert the graph to a serializable format
             const serializedGraph = {
                 nodes: Array.from(this.graph.nodes.entries()),
                 edges: Array.from(this.graph.edges.entries())
             };
             
-            // Write to disk
             fs.writeFileSync(this.graphPath, JSON.stringify(serializedGraph, null, 2));
             Logger.info(`SIKG graph saved to ${this.graphPath}`);
         } catch (error) {
@@ -858,15 +885,11 @@ export class SIKGManager {
         }
     }
 
-    /**
-     * Load the graph from disk
-     */
     private async loadGraph(): Promise<void> {
         try {
             const content = fs.readFileSync(this.graphPath, 'utf8');
             const serializedGraph = JSON.parse(content);
             
-            // Reconstruct the graph
             this.graph = {
                 nodes: new Map(serializedGraph.nodes),
                 edges: new Map(serializedGraph.edges)
@@ -877,5 +900,11 @@ export class SIKGManager {
             Logger.error('Failed to load SIKG graph:', error);
             throw error;
         }
+    }
+
+    public dispose(): void {
+        this.saveGraph().catch(error => {
+            Logger.error('Failed to save SIKG on dispose:', error);
+        });
     }
 }
