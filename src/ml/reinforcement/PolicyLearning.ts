@@ -147,7 +147,7 @@ export class PolicyLearning {
                 Math.sqrt(Math.log(totalCount + 1) / actionCount) : 
                 Number.MAX_VALUE;
             
-            const ucbValue = qValue + this.parameters.ucbConstant * confidence;
+            const ucbValue = qValue + (this.parameters.ucbConstant ?? 1.0) * confidence;
             
             if (ucbValue > bestValue) {
                 bestValue = ucbValue;
@@ -319,10 +319,10 @@ export class PolicyLearning {
             // Adapt temperature based on performance
             if (reward > 0.5) {
                 // Good performance: reduce temperature (more exploitation)
-                this.parameters.temperature = Math.max(0.1, this.parameters.temperature * 0.99);
+                this.parameters.temperature = Math.max(0.1, (this.parameters.temperature ?? 1.0) * 0.99);
             } else if (reward < -0.1) {
                 // Poor performance: increase temperature (more exploration)
-                this.parameters.temperature = Math.min(2.0, this.parameters.temperature * 1.01);
+                this.parameters.temperature = Math.min(2.0, (this.parameters.temperature ?? 1.0) * 1.01);
             }
         }
 
@@ -372,15 +372,19 @@ export class PolicyLearning {
         const qValueVariance = this.calculateQValueVariance();
         
         return {
-            episodeCount: this.episodeCount,
-            totalStates: totalStates,
-            totalStateActionPairs: totalStateActionPairs,
-            currentLearningRate: this.learningRate,
-            currentExplorationRate: this.explorationRate,
-            averageQValue: averageQValue,
-            qValueVariance: qValueVariance,
-            policyType: this.policyType,
-            parameters: { ...this.parameters }
+            totalEpisodes: this.episodeCount,
+            recentEpisodes: 0,
+            currentAccuracy: 0,
+            bestAccuracy: 0,
+            averageAccuracy: 0,
+            currentF1Score: 0,
+            bestF1Score: 0,
+            averageF1Score: 0,
+            recentImprovement: 0,
+            learningRate: this.learningRate,
+            convergenceScore: 0,
+            stabilityScore: 0,
+            lastUpdated: new Date()
         };
     }
 

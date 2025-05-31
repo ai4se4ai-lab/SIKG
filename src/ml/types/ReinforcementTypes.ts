@@ -178,6 +178,7 @@ export interface EnvironmentResponse {
     actualResults?: any[];
     executionMetrics?: any;
     accuracy?: number;
+    feedbackSignals?: FeedbackSignal[];
     done?: boolean;
 }
 

@@ -100,7 +100,11 @@ export class TestRunnerService {
         // Create environment response for RL
         const environmentResponse = this.createEnvironmentResponse(
             allResults,
-            testsToRun,
+            testsToRun.map(t => ({
+                testId: t.testId,
+                testName: t.testName,
+                predictedImpact: t.impactScore
+            })),
             totalTime,
             feedbackSignals
         );
@@ -421,17 +425,36 @@ export class TestRunnerService {
         
         switch (strategy.type) {
             case 'top_n':
+                if (
+                    !strategy.parameters ||
+                    typeof strategy.parameters.n !== 'number'
+                ) {
+                    throw new Error("Missing or invalid 'n' parameter for 'top_n' strategy.");
+                }
                 return allTests
                     .sort((a, b) => b.impactScore - a.impactScore)
                     .slice(0, strategy.parameters.n)
                     .map(t => t.testId);
                     
             case 'threshold':
+                if (
+                    !strategy.parameters ||
+                    typeof strategy.parameters.threshold !== 'number'
+                ) {
+                    throw new Error("Missing or invalid 'threshold' parameter for 'threshold' strategy.");
+                }
+                const threshold = strategy.parameters.threshold;
                 return allTests
-                    .filter(t => t.impactScore >= strategy.parameters.threshold)
+                    .filter(t => t.impactScore >= threshold)
                     .map(t => t.testId);
                     
             case 'percentage':
+                if (
+                    !strategy.parameters ||
+                    typeof strategy.parameters.percentage !== 'number'
+                ) {
+                    throw new Error("Missing or invalid 'percentage' parameter for 'percentage' strategy.");
+                }
                 const count = Math.ceil(allTests.length * strategy.parameters.percentage);
                 return allTests
                     .sort((a, b) => b.impactScore - a.impactScore)

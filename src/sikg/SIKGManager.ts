@@ -106,9 +106,13 @@ export class SIKGManager {
         try {
             // Load previous learning data if available
             const savedPolicyData = this.context.globalState.get('sikg.policyData');
-            if (savedPolicyData) {
-                this.policyLearning.importPolicy(savedPolicyData);
+            if (savedPolicyData && typeof savedPolicyData === 'object' && savedPolicyData !== null
+                && 'type' in savedPolicyData && 'parameters' in savedPolicyData && 'qTableData' in savedPolicyData && 'actionCountsData' in savedPolicyData
+            ) {
+                this.policyLearning.importPolicy(savedPolicyData as any);
                 Logger.info('Loaded previous RL policy data');
+            } else if (savedPolicyData) {
+                Logger.warn('Saved policy data is invalid or incomplete, skipping import.');
             }
 
             Logger.info('RL components initialized successfully');
