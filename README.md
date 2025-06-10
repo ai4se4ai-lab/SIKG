@@ -1,12 +1,8 @@
 # SIKG - Semantic Impact Knowledge Graph
 
 <p align="center">
-  <img src="images/sikg-logo.png" alt="SIKG Logo" width="150"/>
-</p>
-
-<p align="center">
   <b>Intelligently select and prioritize test cases based on semantic change impact analysis</b><br>
-  <sub>Revolutionary AI-powered test selection that understands your code changes</sub>
+  <sub>AI-powered test selection that understands your code changes</sub>
 </p>
 
 <p align="center">
@@ -20,9 +16,7 @@
   <a href="#license">License</a>
 </p>
 
-<p align="center">
-  <img src="images/sikg-demo.gif" alt="SIKG in action" width="800"/>
-</p>
+---
 
 ## 🌟 Key Features
 
@@ -30,8 +24,8 @@
 🔗 **Knowledge Graph-Based Impact Propagation** - Maps how changes ripple through your entire codebase  
 ⚡ **Intelligent Test Prioritization** - Focus on tests most likely to catch issues from your specific changes  
 📈 **Self-Learning System** - Continuously improves accuracy from test execution feedback using reinforcement learning  
-👁️ **Interactive Visual Impact Graph** - Explore relationships between code and tests with D3.js visualization  
-🌐 **Multi-Language Support** - Works with Python, JavaScript, TypeScript, Java, C#, and Go  
+👁️ **Interactive Visual Impact Graph** - Explore relationships between code and tests with built-in visualization  
+🌐 **Python-First Design** - Optimized for Python projects with extensible architecture for other languages  
 🎯 **Precise Change Detection** - Tracks exact lines changed, not just file-level modifications  
 🔄 **Real-time Analysis** - Instant feedback on save or manual trigger  
 📊 **Test Impact Scoring** - Quantified risk assessment for each test case  
@@ -46,7 +40,7 @@ SIKG revolutionizes test selection by modeling your codebase as a semantic knowl
 When first installed, SIKG analyzes your codebase and constructs a comprehensive knowledge graph where:
 
 - **Nodes** represent code elements (functions, classes, methods, modules) and test cases
-- **Edges** represent relationships like `calls`, `inherits_from`, `tests`, `depends_on`, `imports`
+- **Edges** represent relationships like `CALLS`, `INHERITS_FROM`, `TESTS`, `IMPORTS`, `USES`
 - **Weights** indicate relationship strength and impact propagation factors
 
 ```
@@ -57,7 +51,7 @@ When first installed, SIKG analyzes your codebase and constructs a comprehensive
        │ BELONGS_TO                 │ USES                      │ COVERS
        ▼                            ▼                           ▼
 ┌─────────────┐              ┌─────────────┐             ┌─────────────┐
-│   main.py   │              │   utils.py  │             │ hello_spec  │
+│   main.py   │              │   utils.py  │             │ hello_test  │
 └─────────────┘              └─────────────┘             └─────────────┘
 ```
 
@@ -67,12 +61,12 @@ When you make changes, SIKG doesn't just look at which lines changed—it analyz
 
 | Change Type | Description | Typical Impact | Priority |
 |-------------|-------------|----------------|----------|
-| 🐛 **Bug Fix** | Corrections to existing functionality | High | Critical |
-| ✨ **Feature Addition** | New functionality or capabilities | Moderate-High | High |
-| 🔄 **Signature Refactoring** | Changes to APIs, interfaces, or method signatures | Very High | Critical |
-| 🧹 **Logic Refactoring** | Internal code restructuring without API changes | Medium | Medium |
-| 📦 **Dependency Update** | Changes to imports or external dependencies | Medium-High | High |
-| ⚡ **Performance Optimization** | Speed or resource efficiency improvements | Low-Medium | Low |
+| 🐛 **BUG_FIX** | Corrections to existing functionality | High | Critical |
+| ✨ **FEATURE_ADDITION** | New functionality or capabilities | Moderate-High | High |
+| 🔄 **REFACTORING_SIGNATURE** | Changes to APIs, interfaces, or method signatures | Very High | Critical |
+| 🧹 **REFACTORING_LOGIC** | Internal code restructuring without API changes | Medium | Medium |
+| 📦 **DEPENDENCY_UPDATE** | Changes to imports or external dependencies | Medium-High | High |
+| ⚡ **PERFORMANCE_OPT** | Speed or resource efficiency improvements | Low-Medium | Low |
 
 ### 🌊 3. Impact Propagation Algorithm
 
@@ -83,11 +77,6 @@ Changes propagate through the graph using sophisticated algorithms that consider
 - **Semantic Context**: Bug fixes propagate differently than performance optimizations
 - **Historical Patterns**: Machine learning from past test results
 
-```python
-# Simplified propagation formula
-impact_score = initial_impact × relationship_weight × attenuation_factor + historical_boost
-```
-
 ### 🧠 4. Machine Learning & Reinforcement Learning
 
 After running tests, SIKG compares predictions with actual results:
@@ -95,7 +84,7 @@ After running tests, SIKG compares predictions with actual results:
 - **Correct Predictions**: Reinforce existing weights
 - **False Positives**: Reduce impact weights on those paths  
 - **False Negatives**: Increase impact weights and discover new relationships
-- **Pattern Recognition**: Graph Neural Networks identify complex failure patterns
+- **Pattern Recognition**: Continuous learning identifies complex failure patterns
 
 ### 📊 5. Test Prioritization & Risk Assessment
 
@@ -112,8 +101,10 @@ Tests receive quantified impact scores and are categorized:
 
 - **Visual Studio Code** 1.70.0 or higher
 - **Git** (for change detection)
-- **Python 3.7+** (for enhanced AST parsing)
-- A project with tests in supported languages
+- **Python 3.7+** with pytest or unittest
+- A Python project with existing tests
+
+> **Note**: SIKG is currently optimized for Python projects. Support for other languages is available through the generic parser but may have limited functionality. See [Adding Language Support](#adding-language-support) for extending to other languages.
 
 ### Installation
 
@@ -128,18 +119,12 @@ Tests receive quantified impact scores and are categorized:
 code --install-extension sikg.vscode-sikg
 ```
 
-#### From VSIX Package
-```bash
-# Download from releases
-code --install-extension vscode-sikg-0.1.0.vsix
-```
-
 ### First-Time Setup
 
-1. **Initial Graph Building**: SIKG will automatically scan your codebase
-2. **Language Detection**: Ensures proper parsing for your project languages
-3. **Relationship Mapping**: Establishes test-to-code connections
-4. **Baseline Creation**: Sets up the knowledge graph foundation
+1. **Open your project** in VS Code
+2. **Initialize SIKG**: Run `SIKG: Initialize Knowledge Graph` from Command Palette (`Ctrl+Shift+P`)
+3. **Wait for analysis**: SIKG will scan your codebase and build the knowledge graph
+4. **Verify setup**: Check the SIKG output panel for confirmation
 
 ```
 🔄 Building SIKG Knowledge Graph...
@@ -157,12 +142,11 @@ code --install-extension vscode-sikg-0.1.0.vsix
 Edit your code as usual. SIKG works with any changes—from single-line fixes to major refactoring.
 
 #### ⚡ **Step 2: Analyze Impact** 
-**Option A: Automatic Analysis** (if enabled)
-- Changes analyzed automatically on file save
 
-**Option B: Manual Analysis**
-- Click **"Analyze Changes"** in SIKG sidebar
-- Or run `SIKG: Analyze Changes and Prioritize Tests` from Command Palette (`Ctrl+Shift+P`)
+**Manual Analysis:**
+- Open Command Palette (`Ctrl+Shift+P`)
+- Run `SIKG: Analyze Code Changes`
+- Or click **"Analyze Changes"** in SIKG sidebar
 
 ```
 🔍 Analyzing changes...
@@ -189,16 +173,14 @@ Edit your code as usual. SIKG works with any changes—from single-line fixes to
 ```
 
 **Run Options:**
-- **"Run Top 5 Tests"**: Execute highest impact tests immediately
-- **"Run All Impacted Tests"**: Run all tests with significant impact scores
-- **Manual Selection**: Choose specific tests from the prioritized list
+- `SIKG: Run Selected Tests` - Execute highest impact tests
+- Manual selection from the prioritized list
 
 #### 👁️ **Step 4: Visualize Impact (Optional)**
-Click **"Visualize Graph"** to see an interactive network showing:
+Run `SIKG: Export Graph Visualization` to see an interactive network showing:
 - 🔴 **Red nodes**: Changed code elements
 - 🟡 **Yellow nodes**: Tests impacted by changes  
 - 🔗 **Edges**: Relationships and impact paths
-- 📊 **Interactive controls**: Zoom, filter, explore
 
 ### Advanced Features
 
@@ -211,19 +193,11 @@ Click **"Visualize Graph"** to see an interactive network showing:
    📊 Model accuracy: 94.2% (+1.3%)
 ```
 
-#### 📊 **Impact Analytics**
-- View historical accuracy trends
-- Analyze test failure patterns
+#### 📊 **Performance Reports**
+- View `SIKG: View Performance Report` for detailed analytics
 - Track model improvement over time
-- Export impact data for CI/CD integration
-
-#### 🎯 **Custom Test Strategies**
-Configure different strategies based on your workflow:
-
-- **🚀 Speed Mode**: Run only critical tests (95% confidence)
-- **⚖️ Balanced Mode**: Run critical + high impact tests (85% confidence)  
-- **🔒 Thorough Mode**: Run all impacted tests (70% confidence)
-- **🛡️ Paranoid Mode**: Run full test suite with impact guidance
+- Analyze test failure patterns
+- Export data for CI/CD integration
 
 ## ⚙️ Configuration
 
@@ -231,41 +205,58 @@ Customize SIKG through VS Code settings (`Ctrl+,` → Search "SIKG"):
 
 ### Core Settings
 
-| Setting | Description | Default |
-|---------|-------------|---------|
-| `sikg.analyzeOnSave` | Auto-analyze when files are saved | `false` |
-| `sikg.logLevel` | Logging verbosity (debug/info/warn/error) | `"info"` |
-| `sikg.maxTraversalDepth` | Max depth for impact propagation | `5` |
-| `sikg.minImpactThreshold` | Minimum impact to continue propagation | `0.05` |
+```json
+{
+  "sikg.testSelection.highImpactThreshold": 0.7,
+  "sikg.testSelection.lowImpactThreshold": 0.3,
+  "sikg.reinforcementLearning.enabled": true,
+  "sikg.reinforcementLearning.learningRate": 0.01,
+  "sikg.analysis.includePatterns": ["**/*.py"],
+  "sikg.analysis.excludePatterns": ["**/venv/**", "**/.*/**", "**/node_modules/**"]
+}
+```
 
 ### Language Support
 
-| Setting | Description | Default |
-|---------|-------------|---------|
-| `sikg.supportedLanguages` | Languages to analyze | `["python", "javascript", "typescript", "java", "csharp", "go"]` |
-| `sikg.codeFileExtensions` | File extensions to consider as code | `["py", "js", "ts", "tsx", "java", "cs", "go"]` |
+Currently, SIKG provides **full support for Python** with extensible architecture for other languages:
+
+| Language | Support Level | Features Available |
+|----------|---------------|-------------------|
+| **Python** | ✅ **Full** | AST parsing, pytest/unittest detection, semantic analysis |
+| **JavaScript/TypeScript** | 🔶 **Basic** | Generic parsing, limited test detection |
+| **Java** | 🔶 **Basic** | Generic parsing, limited test detection |
+| **C#** | 🔶 **Basic** | Generic parsing, limited test detection |
+| **Go** | 🔶 **Basic** | Generic parsing, limited test detection |
+| **Other** | ⚪ **Generic** | File-level analysis only |
+
+> **Extending Language Support**: See the [Adding Language Support](#adding-language-support) section for detailed instructions on implementing full support for additional languages.
 
 ### Test Detection
 
-| Setting | Description | Default |
-|---------|-------------|---------|
-| `sikg.testFilePatterns` | Glob patterns for test files | See below |
-| `sikg.excludePatterns` | Patterns to exclude from analysis | `["**/node_modules/**", "**/dist/**", ...]` |
+SIKG currently provides comprehensive test detection for **Python frameworks**:
 
-#### Default Test Patterns
+#### Python Test Frameworks (Full Support)
+
+| Framework | Detection Patterns | Features |
+|-----------|-------------------|----------|
+| **pytest** | `test_*.py`, `*_test.py` | Function discovery, parameterized tests, fixtures |
+| **unittest** | `Test*.py`, `*Test.py` | Class-based tests, test methods, assertions |
+
+#### Configuration
+
 ```json
 {
   "sikg.testFilePatterns": [
-    "**/test_*.py",           // Python: test_example.py
-    "**/*_test.py",           // Python: example_test.py  
-    "**/*.test.js",           // JavaScript: example.test.js
-    "**/*.spec.ts",           // TypeScript: example.spec.ts
-    "**/*Test.java",          // Java: ExampleTest.java
-    "**/*Tests.cs",           // C#: ExampleTests.cs
-    "**/*_test.go"            // Go: example_test.go
+    "**/test_*.py",           // pytest: test_example.py
+    "**/*_test.py",           // pytest: example_test.py  
+    "**/Test*.py",            // unittest: TestExample.py
+    "**/*Test.py",            // unittest: ExampleTest.py
+    "**/tests/**/*.py"        // Python tests in tests/ directory
   ]
 }
 ```
+
+> **Other Languages**: Basic test detection is available for JavaScript (`.test.js`, `.spec.js`), Java (`*Test.java`), and other languages through generic patterns. See [Adding Language Support](#adding-language-support) for implementing comprehensive test detection.
 
 ### Impact Thresholds
 
@@ -273,28 +264,8 @@ Customize SIKG through VS Code settings (`Ctrl+,` → Search "SIKG"):
 |---------|-------------|---------|-------|
 | `sikg.highImpactThreshold` | Threshold for critical tests | `0.7` | 0.0-1.0 |
 | `sikg.lowImpactThreshold` | Threshold for low impact tests | `0.3` | 0.0-1.0 |
-
-### Example Configuration
-
-```json
-{
-  "sikg.analyzeOnSave": true,
-  "sikg.logLevel": "debug",
-  "sikg.maxTraversalDepth": 7,
-  "sikg.highImpactThreshold": 0.8,
-  "sikg.testFilePatterns": [
-    "**/tests/**/*.py",
-    "**/__tests__/**/*.js",
-    "**/spec/**/*.ts"
-  ],
-  "sikg.excludePatterns": [
-    "**/node_modules/**",
-    "**/venv/**",
-    "**/build/**",
-    "**/coverage/**"
-  ]
-}
-```
+| `sikg.maxTraversalDepth` | Max depth for impact propagation | `5` | 1-10 |
+| `sikg.minImpactThreshold` | Minimum impact to continue propagation | `0.05` | 0.0-1.0 |
 
 ## 🛠️ Development
 
@@ -324,113 +295,64 @@ npm run watch
 ### Project Structure
 
 ```
-vscode-sikg/
-├── src/                           # Source code
-│   ├── extension.ts               # Extension entry point
-│   ├── sikg/                      # Core SIKG implementation
-│   │   ├── SIKGManager.ts         # Knowledge graph manager
-│   │   ├── ChangeAnalyzer.ts      # Semantic change analysis
-│   │   ├── TestPrioritizer.ts     # Test impact calculation
-│   │   ├── CodeParser.ts          # Code parsing facade
-│   │   ├── TestParser.ts          # Test parsing facade
-│   │   ├── GraphTypes.ts          # Type definitions
-│   │   └── parser/                # Modular parser system
-│   │       ├── code/              # Code parsers by language
-│   │       │   ├── CodeParserFactory.ts
-│   │       │   ├── CodeParserBase.ts
-│   │       │   └── language/
-│   │       │       ├── PythonCodeParser.ts
-│   │       │       └── GenericCodeParser.ts
-│   │       ├── test/              # Test parsers by language
-│   │       │   ├── TestParserFactory.ts
-│   │       │   ├── TestParserBase.ts
-│   │       │   └── language/
-│   │       │       ├── PythonTestParser.ts
-│   │       │       └── GenericTestParser.ts
-│   │       └── util/              # Parser utilities
-│   │           ├── ParserUtils.ts
-│   │           ├── AstProcessorManager.ts
-│   │           ├── AstScripts.ts
-│   │           └── FileUtils.ts
-│   ├── services/                  # External service integrations
-│   │   ├── GitService.ts          # Git diff analysis
-│   │   └── TestRunnerService.ts   # Test execution
-│   ├── ui/                        # User interface components
-│   │   ├── SIKGViewProvider.ts    # Main webview
-│   │   └── StatusBarManager.ts    # Status bar integration
-│   └── utils/                     # Utility modules
-│       ├── Logger.ts              # Logging system
-│       └── ConfigManager.ts       # Configuration handling
-├── package.json                   # Extension manifest
-├── tsconfig.json                  # TypeScript configuration
-└── README.md                      # This file
+src/sikg/
+├── GraphTypes.ts              # Core data structures
+├── SIKGManager.ts             # Main orchestrator
+├── CodeParser.ts              # Code analysis facade
+├── TestParser.ts              # Test analysis facade
+├── ChangeAnalyzer.ts          # Semantic change detection
+├── parser/                    # Modular parsing system
+│   ├── code/                  # Code parsers
+│   │   ├── CodeParserFactory.ts
+│   │   ├── language/
+│   │   │   ├── PythonCodeParser.ts
+│   │   │   └── GenericCodeParser.ts
+│   │   └── CodeParserBase.ts
+│   ├── test/                  # Test parsers
+│   │   ├── TestParserFactory.ts
+│   │   ├── language/
+│   │   │   ├── PythonTestParser.ts
+│   │   │   └── GenericTestParser.ts
+│   │   └── TestParserBase.ts
+│   └── util/                  # Shared utilities
+├── learning/                  # Reinforcement learning
+│   ├── RLManager.ts
+│   ├── MDPFramework.ts
+│   ├── PolicyManager.ts
+│   ├── WeightUpdateEngine.ts
+│   └── FeedbackProcessor.ts
+├── history/                   # Git history analysis
+│   ├── HistoryAnalyzer.ts
+│   ├── CommitTracker.ts
+│   ├── CoChangeDetector.ts
+│   └── FaultCorrelator.ts
+└── evaluation/                # Performance metrics
+    ├── MetricsCollector.ts
+    ├── APFDCalculator.ts
+    ├── EffectivenessTracker.ts
+    └── ReportGenerator.ts
 ```
 
-### Core Architecture
+### Algorithm Implementation
 
-#### 🏗️ **Knowledge Graph (SIKGManager)**
-- Maintains nodes (code elements, tests) and edges (relationships)
-- Handles graph persistence and loading
-- Manages change propagation and impact calculation
+The system implements five core algorithms:
 
-#### 🔍 **Change Analysis (ChangeAnalyzer)**
-- Integrates with Git to detect code changes
-- Performs semantic classification of changes
-- Maps changes to graph nodes with precise line tracking
+1. **Knowledge Graph Construction** (Algorithm 1)
+2. **Empirical Weight Enhancement** (Algorithm 2)  
+3. **Semantic Change Analysis** (Algorithm 3)
+4. **Impact Propagation** (Algorithm 4)
+5. **Reinforcement Learning Adaptation** (Algorithm 5)
 
-#### 🧪 **Test Prioritization (TestPrioritizer)**
-- Implements impact propagation algorithms  
-- Calculates test impact scores using graph traversal
-- Applies machine learning for continuous improvement
+### Command Reference
 
-#### 🎨 **Parser System**
-- **Modular Design**: Language-specific parsers with fallback
-- **AST Support**: Uses Python AST for accurate parsing when available
-- **Relationship Extraction**: Identifies calls, imports, inheritance, etc.
-
-### Adding New Language Support
-
-1. **Create Code Parser**:
-```typescript
-// src/sikg/parser/code/language/NewLanguageCodeParser.ts
-export class NewLanguageCodeParser extends CodeParserBase {
-    public getLanguage(): string { return 'newlanguage'; }
-    
-    public canHandle(filePath: string): boolean {
-        return filePath.endsWith('.newext');
-    }
-    
-    public async parseCodeFile(content: string, filePath: string): Promise<CodeElement[]> {
-        // Implement parsing logic
-    }
-}
-```
-
-2. **Create Test Parser**:
-```typescript
-// src/sikg/parser/test/language/NewLanguageTestParser.ts
-export class NewLanguageTestParser extends TestParserBase {
-    public getLanguage(): string { return 'newlanguage'; }
-    
-    public async parseTestFile(content: string, filePath: string): Promise<TestCase[]> {
-        // Implement test parsing logic
-    }
-}
-```
-
-3. **Register in Factories**:
-```typescript
-// Update CodeParserFactory.ts and TestParserFactory.ts
-this.registerParser('newlanguage', new NewLanguageCodeParser());
-```
-
-4. **Add Configuration**:
-```json
-// Update package.json configuration schema
-"sikg.supportedLanguages": {
-  "default": ["python", "javascript", "newlanguage"]
-}
-```
+| Command | Description |
+|---------|-------------|
+| `SIKG: Initialize Knowledge Graph` | Build initial graph from codebase |
+| `SIKG: Analyze Code Changes` | Detect and classify recent changes |
+| `SIKG: Select Tests` | Choose relevant tests based on changes |
+| `SIKG: Run Selected Tests` | Execute prioritized test subset |
+| `SIKG: View Performance Report` | Open detailed analytics dashboard |
+| `SIKG: Export Graph Visualization` | Generate interactive graph view |
 
 ### Testing
 
@@ -452,31 +374,11 @@ npm run package
 
 ### Common Issues
 
-#### ❌ "Language detection error" 
-**Problem**: SIKG can't detect the programming language of your files.
-
-**Solutions**:
-1. **Install language extensions**:
-   ```bash
-   # For Python
-   code --install-extension ms-python.python
-   ```
-
-2. **Run diagnostics**:
-   ```
-   Command Palette → "SIKG: Diagnose Language Issues"
-   ```
-
-3. **Manual fix**:
-   ```
-   Command Palette → "SIKG: Fix Language Issues"
-   ```
-
 #### ❌ "No tests found" or "Tests not linking to code"
 **Problem**: SIKG isn't detecting your test files or connecting them to code.
 
 **Solutions**:
-1. **Check test patterns**:
+1. **Check test patterns** in settings:
    ```json
    "sikg.testFilePatterns": [
      "**/test_*.py",        // ✅ test_example.py
@@ -500,7 +402,7 @@ npm run package
 
 3. **Rebuild graph**:
    ```
-   Command Palette → "SIKG: Rebuild Knowledge Graph"
+   Command Palette → "SIKG: Initialize Knowledge Graph"
    ```
 
 #### ❌ "Changes analyzed, 0 tests impacted"
@@ -535,8 +437,6 @@ npm run package
    "sikg.maxTraversalDepth": 3
    ```
 
-3. **Batch processing**: SIKG processes files in batches—larger codebases may take time on first build
-
 ### Debug Mode
 
 Enable detailed logging to diagnose issues:
@@ -552,9 +452,8 @@ Then check the **Output Panel** (`View → Output` → Select "SIKG") for detail
 ### Getting Help
 
 1. **Check Output Logs**: `View → Output → SIKG`
-2. **Run Diagnostics**: `SIKG: Diagnose Language Issues`
-3. **Reset Extension**: `SIKG: Rebuild Knowledge Graph`
-4. **Report Issues**: [GitHub Issues](https://github.com/ai4se4ai-lab/SIKG/issues)
+2. **Reset Extension**: `SIKG: Initialize Knowledge Graph`
+3. **Report Issues**: [GitHub Issues](https://github.com/ai4se4ai-lab/SIKG/issues)
 
 ### Known Limitations
 
@@ -577,11 +476,12 @@ We welcome contributions! See our [Contributing Guide](CONTRIBUTING.md) for deta
 7. Open a Pull Request
 
 ### Areas for Contribution
-- 🌐 **Language Support**: Add parsers for new programming languages
-- 🧠 **ML Models**: Improve impact prediction algorithms
+- 🌐 **Language Support**: Add comprehensive parsers for JavaScript, TypeScript, Java, C#, Go, and other languages
+- 🧠 **ML Models**: Improve impact prediction algorithms and reinforcement learning
 - 🎨 **UI/UX**: Enhance visualization and user experience
 - 📚 **Documentation**: Improve guides and examples
 - 🐛 **Bug Fixes**: Help resolve issues and edge cases
+- 🧪 **Test Frameworks**: Add support for additional testing frameworks (Mocha, Jest, JUnit, NUnit, etc.)
 
 ## 📄 License
 
@@ -592,8 +492,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - **Research Foundation**: Based on academic work in semantic impact analysis and knowledge graph-based test selection
 - **Inspiration**: Advanced change impact analysis and test prioritization techniques from software engineering research
 - **Community**: Thanks to all contributors and users who help improve SIKG
-- **Dependencies**: Built with TypeScript, VS Code Extension API, D3.js for visualization
-- **Icons**: Created by [Freepik](https://www.freepik.com) from [Flaticon](https://www.flaticon.com/)
+- **Dependencies**: Built with TypeScript, VS Code Extension API, and modern web technologies
 
 ---
 
