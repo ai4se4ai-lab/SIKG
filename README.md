@@ -104,7 +104,8 @@ Tests receive quantified impact scores and are categorized:
 - **Python 3.7+** with pytest or unittest
 - A Python project with existing tests
 
-> **Note**: SIKG is currently optimized for Python projects. Support for other languages is available through the generic parser but may have limited functionality. See [Adding Language Support](#adding-language-support) for extending to other languages.
+> **Note**: SIKG is currently optimized for Python projects. Support for other languages is available through the generic parser but may have limited functionality. See [Adding Language Support](language_support_guide.md) for extending to other languages.
+
 
 ### Installation
 
