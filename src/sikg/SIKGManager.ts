@@ -3,11 +3,15 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
+import { RLManager } from './learning/RLManager';
 import { Logger } from '../utils/Logger';
 import { ConfigManager } from '../utils/ConfigManager';
 import { CodeParser } from './CodeParser';
 import { TestParser } from './TestParser';
-import { Graph, Node, Edge, SemanticChangeInfo, TestResult } from './GraphTypes';
+import { Graph, Node, Edge, SemanticChangeInfo, TestResult, TestImpact } from './GraphTypes';
+import { HistoryAnalyzer } from './history/HistoryAnalyzer';
+
+import { MetricsCollector } from './evaluation/MetricsCollector';
 
 /**
  * FIXED SIKGManager - Proper graph state management and visualization data
@@ -20,6 +24,10 @@ export class SIKGManager {
     private testParser: TestParser;
     private graphPath: string;
     private initialized: boolean = false;
+    private rlManager: RLManager;
+    private metricsCollector: MetricsCollector;
+    private historyAnalyzer: HistoryAnalyzer;
+
 
     constructor(context: vscode.ExtensionContext, configManager: ConfigManager) {
         this.context = context;
@@ -27,6 +35,10 @@ export class SIKGManager {
         this.graph = { nodes: new Map(), edges: new Map() };
         this.codeParser = new CodeParser();
         this.testParser = new TestParser();
+        this.rlManager = new RLManager(configManager);
+        this.metricsCollector = new MetricsCollector(this.configManager);
+        this.historyAnalyzer = new HistoryAnalyzer(configManager);
+
         
         // Set up storage path for the graph
         const storagePath = context.globalStorageUri.fsPath;
@@ -45,9 +57,19 @@ export class SIKGManager {
                 // Load existing graph
                 await this.loadGraph();
                 Logger.info('Loaded existing SIKG graph');
+
+                 // Apply historical weight enhancement
+                await this.enhanceGraphWithHistory();
                 
                 // Check if we need to update the graph (e.g., new files added)
                 const needsUpdate = await this.checkForGraphUpdate();
+
+                const rlEnabled = vscode.workspace.getConfiguration('sikg').get<boolean>('reinforcementLearning.enabled', true);
+                this.rlManager.setEnabled(rlEnabled);
+                
+                Logger.info('✅ SIKG Manager with RL initialized successfully');
+                this.initialized = true;
+
                 if (needsUpdate) {
                     Logger.info('Updating SIKG graph with new files');
                     await this.updateGraph();
@@ -61,6 +83,34 @@ export class SIKGManager {
         } catch (error) {
             Logger.error('Failed to initialize SIKG:', error);
             throw error;
+        }
+
+        
+    }
+
+    // Add this new method to enhance graph weights with historical data:
+    private async enhanceGraphWithHistory(): Promise<void> {
+        try {
+            Logger.info('Enhancing graph weights with historical analysis...');
+            
+            const enhancedWeights = await this.historyAnalyzer.enhanceWeights({
+                nodes: this.graph.nodes,
+                edges: this.graph.edges
+            });
+
+            // Apply enhanced weights to the graph
+            for (const [edgeId, weight] of enhancedWeights.weights.entries()) {
+                const edge = this.graph.edges.get(edgeId);
+                if (edge) {
+                    edge.weight = weight;
+                }
+            }
+
+            Logger.info(`Enhanced ${enhancedWeights.metrics.processedEdges} edge weights using ${enhancedWeights.metrics.commitsAnalyzed} commits`);
+            
+        } catch (error) {
+            Logger.error('Error enhancing graph with history:', error);
+            // Continue without historical enhancement
         }
     }
 
@@ -280,6 +330,95 @@ export class SIKGManager {
             Logger.error('Failed to update SIKG with test results:', error);
             throw error;
         }
+
+        try {
+            // Process RL feedback
+            await this.rlManager.processTestFeedback(testResults);
+            
+            // Update graph weights using RL
+            this.graph = await this.rlManager.updateGraphWeights(this.graph);
+            
+            // Collect performance metrics
+            this.metricsCollector?.recordTestExecution(testResults);
+            
+            Logger.info(`✅ Updated SIKG with ${testResults.length} test results including RL feedback`);
+            
+        } catch (error) {
+            Logger.error('❌ Error in RL feedback processing:', error);
+            // Continue with existing logic even if RL fails
+        }
+    }
+
+     /**
+     * Load persisted RL state
+     */
+    private async loadRLState(): Promise<void> {
+        try {
+            const savedState = this.context.globalState.get('sikg.rlState');
+            if (savedState) {
+                this.rlManager.importState(savedState);
+                Logger.info('Loaded persisted RL state');
+            }
+        } catch (error) {
+            Logger.error('Error loading RL state:', error);
+        }
+    }
+
+    /**
+     * New method: Start RL-enhanced test selection session
+     */
+    public async startRLTestSession(
+        semanticChanges: SemanticChangeInfo[],
+        testImpacts: Record<string, TestImpact>
+    ): Promise<Record<string, TestImpact>> {
+        if (!this.initialized) {
+            await this.initialize();
+        }
+
+        try {
+            // Get available tests
+            const availableTests = Object.keys(testImpacts);
+            
+            // Start RL session and get adjusted impacts
+            const adjustedImpacts = await this.rlManager.startRLSession(
+                semanticChanges,
+                testImpacts,
+                availableTests
+            );
+            
+            Logger.info(`Started RL session with ${availableTests.length} available tests`);
+            return adjustedImpacts;
+            
+        } catch (error) {
+            Logger.error('Error starting RL test session:', error);
+            return testImpacts; // Fallback to original impacts
+        }
+    }
+
+    /**
+     * Get RL system status and recommendations
+     */
+    public getRLStatus(): {
+        systemStatus: any;
+        recommendations: string[];
+        isEnabled: boolean;
+    } {
+        const systemStatus = this.rlManager.getSystemStatus();
+        const recommendations = this.rlManager.getPerformanceRecommendations();
+        
+        return {
+            systemStatus,
+            recommendations,
+            isEnabled: systemStatus.isEnabled
+        };
+    }
+
+    /**
+     * Enable/disable RL system
+     */
+    public setRLEnabled(enabled: boolean): void {
+        this.rlManager.setEnabled(enabled);
+        Logger.info(`RL system ${enabled ? 'enabled' : 'disabled'}`);
     }
 
     /**
@@ -645,6 +784,19 @@ export class SIKGManager {
         this.saveGraph().catch(error => {
             Logger.error('Failed to save SIKG on dispose:', error);
         });
+        // Dispose history analyzer
+        this.historyAnalyzer.dispose();
+        try {
+            const rlState = this.rlManager.exportState();
+            // You could save this to context.globalState for persistence
+            this.context.globalState.update('sikg.rlState', rlState);
+        } catch (error) {
+            Logger.error('Error saving RL state on dispose:', error);
+        }
+    }
+
+    public getHistoryStats(): any {
+        return this.historyAnalyzer.getAnalysisStats();
     }
 
     /**

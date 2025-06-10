@@ -18,9 +18,12 @@ export class TestPrioritizer {
      * Calculate test impact scores based on semantic changes
      * This implements Algorithm 3 from the SIKG paper: Impact Propagation and Scoring
      */
-    public async calculateTestImpact(
+    private async calculateTestImpactOriginal(
         semanticChanges: SemanticChangeInfo[]
     ): Promise<Record<string, TestImpact>> {
+        // This contains the existing calculateTestImpact logic
+        // Just rename the existing method to this
+        
         Logger.info('Calculating test impact scores...');
         
         // Map to store impact scores for tests
@@ -143,6 +146,30 @@ export class TestPrioritizer {
         Logger.info(`Visited ${allVisitedNodes.size} nodes during impact propagation`);
         
         return testImpactScores;
+    }
+
+    public async calculateTestImpact(
+        semanticChanges: SemanticChangeInfo[]
+    ): Promise<Record<string, TestImpact>> {
+        Logger.info('Calculating test impact scores with RL enhancement...');
+        
+        // Run original impact calculation
+        const originalImpacts = await this.calculateTestImpactOriginal(semanticChanges);
+        
+        try {
+            // Apply RL enhancements through SIKGManager
+            const enhancedImpacts = await this.sikgManager.startRLTestSession(
+                semanticChanges,
+                originalImpacts
+            );
+            
+            Logger.info(`RL enhanced ${Object.keys(enhancedImpacts).length} test impacts`);
+            return enhancedImpacts;
+            
+        } catch (error) {
+            Logger.error('Error in RL enhancement, using original impacts:', error);
+            return originalImpacts;
+        }
     }
 
     /**
