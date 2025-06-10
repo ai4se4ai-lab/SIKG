@@ -10,6 +10,10 @@ import { GitService } from './services/GitService';
 import { TestRunnerService } from './services/TestRunnerService';
 import { Logger } from './utils/Logger';
 import { ConfigManager } from './utils/ConfigManager';
+import { RLManager } from './sikg/learning/RLManager';
+import { MetricsCollector, APFDCalculator, EffectivenessTracker, ReportGenerator } from './sikg/evaluation';
+import type { PerformanceReport } from './sikg/evaluation';
+
 
 // Global extension state
 let sikgManager: SIKGManager;
@@ -20,6 +24,10 @@ let sikgViewProvider: SIKGViewProvider;
 let gitService: GitService;
 let testRunnerService: TestRunnerService;
 let configManager: ConfigManager;
+let metricsCollector: MetricsCollector;
+let apfdCalculator: APFDCalculator;
+let effectivenessTracker: EffectivenessTracker;
+let reportGenerator: ReportGenerator;
 
 export async function activate(context: vscode.ExtensionContext) {
     try {
@@ -72,6 +80,19 @@ export async function activate(context: vscode.ExtensionContext) {
             Logger.error('❌ Failed to register UI components:', error);
             throw error;
         }
+
+        // Initialize evaluation system
+        try {
+            metricsCollector = new MetricsCollector(configManager);
+            apfdCalculator = new APFDCalculator();
+            effectivenessTracker = new EffectivenessTracker();
+            reportGenerator = new ReportGenerator(context);
+            
+            Logger.info('✅ Performance evaluation system initialized');
+        } catch (error) {
+            Logger.error('❌ Failed to initialize evaluation system:', error);
+            // Continue without evaluation system
+        }
         
         // Register commands with enhanced error handling
         registerCommands(context);
@@ -100,7 +121,7 @@ export async function activate(context: vscode.ExtensionContext) {
             `SIKG Extension failed to activate: ${errorMessage}. Check the output panel for details.`,
             'Open Output Panel',
             'Retry'
-        ).then(action => {
+        ).then((action: string | undefined) => {
             if (action === 'Open Output Panel') {
                 vscode.commands.executeCommand('workbench.panel.output.focus');
             } else if (action === 'Retry') {
@@ -165,7 +186,7 @@ function showWelcomeMessage(context: vscode.ExtensionContext): void {
             'Welcome to SIKG! Ready to intelligently prioritize your tests based on code changes.',
             'Get Started',
             'Learn More'
-        ).then(action => {
+        ).then((action: string | undefined) => {
             if (action === 'Get Started') {
                 vscode.commands.executeCommand('sikg.analyzeChanges');
             } else if (action === 'Learn More') {
@@ -216,7 +237,7 @@ function registerCommands(context: vscode.ExtensionContext) {
                         vscode.window.showErrorMessage(
                             'Language detection error. Try running "SIKG: Fix Language Issues" command.',
                             'Fix Language Issues'
-                        ).then(action => {
+                        ).then((action: string | undefined) => {
                             if (action === 'Fix Language Issues') {
                                 vscode.commands.executeCommand('sikg.fixLanguageIssues');
                             }
@@ -264,6 +285,23 @@ function registerCommands(context: vscode.ExtensionContext) {
                 vscode.window.showInformationMessage(message);
                 statusBarManager.updateStatus(testCount > 0 ? `${testCount} tests prioritized` : 'No tests prioritized');
                 
+                // Record test selection if evaluation system is available
+                if (metricsCollector) {
+                    try {
+                        // Find all Python files that were analyzed
+                        const pythonFiles = await vscode.workspace.findFiles('**/*.py', '**/node_modules/**');
+                        
+                        metricsCollector.recordTestSelection(
+                            sikgManager.getTestNodes().length, // Total tests
+                            Object.keys(testImpacts), // Selected tests
+                            pythonFiles.length // Python files analyzed
+                        );
+                        
+                        Logger.debug('Recorded test selection metrics');
+                    } catch (error) {
+                        Logger.error('Error recording test selection metrics:', error);
+                    }
+                }    
             } catch (error) {
                 Logger.error('❌ Unexpected error during change analysis:', error);
                 vscode.window.showErrorMessage(`Unexpected error: ${error instanceof Error ? error.message : String(error)}`);
@@ -289,6 +327,27 @@ function registerCommands(context: vscode.ExtensionContext) {
                 let results;
                 try {
                     results = await testRunnerService.runPrioritizedTests(testImpacts, topN);
+
+                    // Record metrics if evaluation system is available
+                    if (metricsCollector && apfdCalculator && effectivenessTracker) {
+                        try {
+                            // Record test execution
+                            metricsCollector.recordTestExecution(results);
+                            
+                            // Calculate and record effectiveness
+                            const metrics = metricsCollector.getMetrics();
+                            const testExecutions = metricsCollector.getTestExecutions();
+                            const apfdResult = apfdCalculator.calculateAPFD(testExecutions);
+                            const trends = effectivenessTracker.getEffectivenessTrends();
+                            
+                            effectivenessTracker.recordEffectiveness(testExecutions, metrics, apfdResult);
+                            
+                            Logger.info(`Recorded metrics: APFD=${apfdResult.apfd.toFixed(3)}, Accuracy=${metrics.selectionAccuracy.toFixed(3)}`);
+                        } catch (error) {
+                            Logger.error('Error recording evaluation metrics:', error);
+                        }
+                    }
+
                 } catch (error) {
                     Logger.error('Failed to run prioritized tests:', error);
                     vscode.window.showErrorMessage(`Failed to run tests: ${error instanceof Error ? error.message : String(error)}`);
@@ -436,12 +495,501 @@ function registerCommands(context: vscode.ExtensionContext) {
             }
         })
     );
+
+    context.subscriptions.push(
+    vscode.commands.registerCommand('sikg.analyzeHistory', async () => {
+        try {
+            Logger.info('🕐 Starting historical analysis...');
+            statusBarManager.updateStatus('Analyzing history...', true);
+            
+            // Get historical analysis statistics
+            const historyStats = sikgManager.getHistoryStats();
+            
+            if (!historyStats.initialized) {
+                vscode.window.showWarningMessage('Historical analysis not available. Make sure you\'re in a Git repository.');
+                statusBarManager.updateStatus('History analysis unavailable');
+                return;
+            }
+            
+            // Show analysis results
+            const message = `Historical Analysis Complete:\n` +
+                          `• Commits analyzed: ${historyStats.commitsAvailable}\n` +
+                          `• Test results found: ${historyStats.testResultsAvailable}\n` +
+                          `• Last analysis: ${new Date(historyStats.lastAnalysisTime).toLocaleString()}`;
+            
+            vscode.window.showInformationMessage(message);
+            statusBarManager.updateStatus('History analysis complete');
+            
+            // Optionally trigger a re-analysis with enhanced weights
+            await vscode.commands.executeCommand('sikg.analyzeChanges');
+            
+        } catch (error) {
+            Logger.error('❌ Error during historical analysis:', error);
+            vscode.window.showErrorMessage(`Historical analysis failed: ${error instanceof Error ? error.message : String(error)}`);
+            statusBarManager.updateStatus('History analysis failed');
+        }
+    })
+);
+
+    // Command to view RL system status
+    context.subscriptions.push(
+        vscode.commands.registerCommand('sikg.showRLStatus', async () => {
+            try {
+                Logger.info('📊 Showing RL system status...');
+                
+                const rlStatus = sikgManager.getRLStatus();
+                
+                // Create and show RL status panel
+                const panel = vscode.window.createWebviewPanel(
+                    'sikgRLStatus',
+                    'SIKG RL System Status',
+                    vscode.ViewColumn.Two,
+                    { 
+                        enableScripts: true,
+                        retainContextWhenHidden: true
+                    }
+                );
+                
+                panel.webview.html = createRLStatusHtml(rlStatus);
+                
+                Logger.info('✅ RL status panel opened');
+                
+            } catch (error) {
+                Logger.error('❌ Error showing RL status:', error);
+                vscode.window.showErrorMessage(`Failed to show RL status: ${error instanceof Error ? error.message : String(error)}`);
+            }
+        })
+    );
+
+    // Command to enable/disable RL
+    context.subscriptions.push(
+        vscode.commands.registerCommand('sikg.toggleRL', async () => {
+            try {
+                const rlStatus = sikgManager.getRLStatus();
+                const currentState = rlStatus.isEnabled;
+                
+                const action = await vscode.window.showQuickPick([
+                    { label: currentState ? '❌ Disable RL' : '✅ Enable RL', value: !currentState },
+                    { label: '📊 Show Status', value: 'status' },
+                    { label: '🔄 Reset RL', value: 'reset' }
+                ], {
+                    placeHolder: `RL is currently ${currentState ? 'enabled' : 'disabled'}. What would you like to do?`
+                });
+                
+                if (!action) return;
+                
+                if (action.value === 'status') {
+                    vscode.commands.executeCommand('sikg.showRLStatus');
+                } else if (action.value === 'reset') {
+                    const confirm = await vscode.window.showWarningMessage(
+                        'This will reset all RL learning progress. Continue?',
+                        'Reset',
+                        'Cancel'
+                    );
+                    if (confirm === 'Reset') {
+                        // Reset RL would need to be implemented in SIKGManager
+                        vscode.window.showInformationMessage('RL system reset (not implemented in this minimal version)');
+                    }
+                } else {
+                    sikgManager.setRLEnabled(action.value as boolean);
+                    vscode.window.showInformationMessage(`RL system ${action.value ? 'enabled' : 'disabled'}`);
+                }
+                
+            } catch (error) {
+                Logger.error('❌ Error toggling RL:', error);
+                vscode.window.showErrorMessage(`Failed to toggle RL: ${error instanceof Error ? error.message : String(error)}`);
+            }
+        })
+    );
+
+    // Command to show RL recommendations
+    context.subscriptions.push(
+        vscode.commands.registerCommand('sikg.showRLRecommendations', async () => {
+            try {
+                const rlStatus = sikgManager.getRLStatus();
+                const recommendations = rlStatus.recommendations;
+                
+                if (recommendations.length === 0) {
+                    vscode.window.showInformationMessage('No RL recommendations available at this time.');
+                    return;
+                }
+                
+                const selectedRec = await vscode.window.showQuickPick(
+                    recommendations.map(rec => ({ label: rec, description: 'RL Recommendation' })),
+                    { placeHolder: 'RL Performance Recommendations' }
+                );
+                
+                if (selectedRec) {
+                    vscode.window.showInformationMessage(selectedRec.label);
+                }
+                
+            } catch (error) {
+                Logger.error('❌ Error showing RL recommendations:', error);
+                vscode.window.showErrorMessage(`Failed to show recommendations: ${error instanceof Error ? error.message : String(error)}`);
+            }
+        })
+    );
+
+    // Enhanced analyze command with RL integration
+    context.subscriptions.push(
+        vscode.commands.registerCommand('sikg.analyzeChangesWithRL', async () => {
+            try {
+                Logger.info('🔍 Starting RL-enhanced change analysis...');
+                statusBarManager.updateStatus('Analyzing with RL...', true);
+                
+                // Get current changes from git
+                const changes = await gitService.getUncommittedChanges();
+                
+                if (!changes || changes.length === 0) {
+                    vscode.window.showInformationMessage('No changes detected to analyze.');
+                    statusBarManager.updateStatus('No changes detected');
+                    return;
+                }
+                
+                // Analyze semantic changes
+                const semanticChanges = await changeAnalyzer.analyzeChanges(changes);
+                
+                if (semanticChanges.length === 0) {
+                    vscode.window.showInformationMessage('No semantic changes found in supported code files.');
+                    statusBarManager.updateStatus('No semantic changes');
+                    return;
+                }
+                
+                // Calculate test impact with RL enhancement
+                const testImpacts = await testPrioritizer.calculateTestImpact(semanticChanges);
+                
+                // Display results in SIKG view
+                sikgViewProvider.updateWithResults(semanticChanges, testImpacts);
+                
+                // Get RL insights
+                const rlStatus = sikgManager.getRLStatus();
+                const testCount = Object.keys(testImpacts).length;
+                
+                let message = `RL-enhanced analysis complete. ${testCount} tests prioritized.`;
+                if (rlStatus.recommendations.length > 0) {
+                    message += ` ${rlStatus.recommendations.length} recommendations available.`;
+                }
+                
+                vscode.window.showInformationMessage(message, 'Show RL Status', 'Show Recommendations')
+                    .then((action: string | undefined) => {
+                        if (action === 'Show RL Status') {
+                            vscode.commands.executeCommand('sikg.showRLStatus');
+                        } else if (action === 'Show Recommendations') {
+                            vscode.commands.executeCommand('sikg.showRLRecommendations');
+                        }
+                    });
+                
+                statusBarManager.updateStatus(`RL: ${testCount} tests prioritized`);
+                
+            } catch (error) {
+                Logger.error('❌ Error in RL-enhanced analysis:', error);
+                vscode.window.showErrorMessage(`RL analysis failed: ${error instanceof Error ? error.message : String(error)}`);
+                statusBarManager.updateStatus('RL analysis failed');
+            }
+        })
+    );
+
+    context.subscriptions.push(
+    vscode.commands.registerCommand('sikg.generateReport', async () => {
+        try {
+            Logger.info('📊 Generating SIKG performance report...');
+            statusBarManager.updateStatus('Generating report...', true);
+            
+            if (!metricsCollector || !apfdCalculator || !effectivenessTracker || !reportGenerator) {
+                vscode.window.showErrorMessage('Performance evaluation system not initialized');
+                return;
+            }
+
+            // Get current metrics and data
+            const metrics = metricsCollector.getMetrics();
+            const testExecutions = metricsCollector.getTestExecutions();
+            
+            if (testExecutions.length === 0) {
+                vscode.window.showInformationMessage('No test execution data available. Run some tests first.');
+                statusBarManager.updateStatus('No data for report');
+                return;
+            }
+
+            // Calculate APFD and trends
+            const apfdResults = apfdCalculator.calculateAPFD(testExecutions);
+            const trends = effectivenessTracker.getEffectivenessTrends();
+            const pythonInsights = effectivenessTracker.getPythonEffectivenessInsights();
+
+            // Generate comprehensive report
+            const report = await reportGenerator.generateReport(
+                metrics,
+                apfdResults,
+                trends,
+                pythonInsights,
+                testExecutions
+            );
+
+            // Save report and show options
+            const action = await vscode.window.showInformationMessage(
+                `Performance report generated. APFD: ${(apfdResults.apfd * 100).toFixed(1)}%, ` +
+                `Efficiency: ${(metrics.reductionRatio * 100).toFixed(1)}%`,
+                'View HTML Report',
+                'Save JSON Report',
+                'Save HTML Report'
+            );
+
+            if (action === 'View HTML Report') {
+                // Create and show HTML report in webview
+                const html = await reportGenerator.generateHTMLReport(report);
+                const panel = vscode.window.createWebviewPanel(
+                    'sikgReport',
+                    'SIKG Performance Report',
+                    vscode.ViewColumn.Two,
+                    { enableScripts: true }
+                );
+                panel.webview.html = html;
+                
+            } else if (action === 'Save JSON Report') {
+                const filePath = await reportGenerator.saveReport(report, 'json');
+                if (filePath) {
+                    vscode.window.showInformationMessage(`Report saved to: ${filePath}`);
+                }
+                
+            } else if (action === 'Save HTML Report') {
+                const filePath = await reportGenerator.saveReport(report, 'html');
+                if (filePath) {
+                    vscode.window.showInformationMessage(`HTML report saved to: ${filePath}`);
+                }
+            }
+
+            statusBarManager.updateStatus('Report generated');
+            
+        } catch (error) {
+            Logger.error('❌ Error generating performance report:', error);
+            vscode.window.showErrorMessage(`Failed to generate report: ${error instanceof Error ? error.message : String(error)}`);
+            statusBarManager.updateStatus('Report generation failed');
+        }
+    })
+    );
+
+    context.subscriptions.push(
+    vscode.commands.registerCommand('sikg.showMetrics', async () => {
+        try {
+            if (!metricsCollector) {
+                vscode.window.showErrorMessage('Metrics collector not initialized');
+                return;
+            }
+
+            const metrics = metricsCollector.getMetrics();
+            const timeMetrics = metricsCollector.getTimeBasedMetrics();
+
+            const message = `SIKG Performance Metrics:\n\n` +
+                          `📊 Test Selection:\n` +
+                          `• Selected: ${metrics.selectedTests}/${metrics.totalTests} tests\n` +
+                          `• Reduction: ${(metrics.reductionRatio * 100).toFixed(1)}%\n` +
+                          `• Accuracy: ${(metrics.selectionAccuracy * 100).toFixed(1)}%\n\n` +
+                          `🐛 Fault Detection:\n` +
+                          `• Faults found: ${metrics.faultsDetected}\n` +
+                          `• Detection rate: ${metrics.executedTests > 0 ? (metrics.faultsDetected / metrics.executedTests * 100).toFixed(1) : 0}%\n\n` +
+                          `⏱️ Execution:\n` +
+                          `• Average time: ${(timeMetrics.averageTime / 1000).toFixed(2)}s\n` +
+                          `• Total time: ${(timeMetrics.totalTime / 1000).toFixed(1)}s\n\n` +
+                          `🐍 Python Analysis:\n` +
+                          `• Files analyzed: ${metrics.pythonFilesAnalyzed}`;
+
+            vscode.window.showInformationMessage(message, { modal: false });
+            
+        } catch (error) {
+            Logger.error('Error showing metrics:', error);
+            vscode.window.showErrorMessage('Failed to retrieve metrics');
+        }
+    })
+    );
+
+}
+
+/**
+ * Create HTML for RL status display
+ */
+function createRLStatusHtml(rlStatus: any): string {
+    const { systemStatus, recommendations, isEnabled } = rlStatus;
+    
+    return `
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>SIKG RL System Status</title>
+            <style>
+                body {
+                    font-family: var(--vscode-font-family);
+                    color: var(--vscode-editor-foreground);
+                    padding: 20px;
+                    line-height: 1.6;
+                }
+                .status-card {
+                    background-color: var(--vscode-editor-background);
+                    border: 1px solid var(--vscode-panel-border);
+                    border-radius: 8px;
+                    padding: 16px;
+                    margin-bottom: 16px;
+                }
+                .status-header {
+                    font-size: 18px;
+                    font-weight: bold;
+                    margin-bottom: 12px;
+                    color: var(--vscode-textLink-foreground);
+                }
+                .metric {
+                    display: flex;
+                    justify-content: space-between;
+                    margin-bottom: 8px;
+                }
+                .metric-label {
+                    color: var(--vscode-descriptionForeground);
+                }
+                .metric-value {
+                    font-weight: bold;
+                }
+                .status-enabled {
+                    color: var(--vscode-terminal-ansiGreen);
+                }
+                .status-disabled {
+                    color: var(--vscode-terminal-ansiRed);
+                }
+                .recommendation {
+                    background-color: var(--vscode-textBlockQuote-background);
+                    border-left: 4px solid var(--vscode-textLink-foreground);
+                    padding: 8px 12px;
+                    margin-bottom: 8px;
+                    font-size: 14px;
+                }
+                .progress-bar {
+                    width: 100%;
+                    height: 8px;
+                    background-color: var(--vscode-progressBar-background);
+                    border-radius: 4px;
+                    overflow: hidden;
+                    margin-top: 4px;
+                }
+                .progress-fill {
+                    height: 100%;
+                    background-color: var(--vscode-progressBar-foreground);
+                    transition: width 0.3s ease;
+                }
+            </style>
+        </head>
+        <body>
+            <h1>🤖 SIKG Reinforcement Learning Status</h1>
+            
+            <div class="status-card">
+                <div class="status-header">System Status</div>
+                <div class="metric">
+                    <span class="metric-label">Status:</span>
+                    <span class="metric-value ${isEnabled ? 'status-enabled' : 'status-disabled'}">
+                        ${isEnabled ? '✅ Enabled' : '❌ Disabled'}
+                    </span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Average Reward:</span>
+                    <span class="metric-value">${(systemStatus.averageReward * 100).toFixed(1)}%</span>
+                </div>
+                <div class="progress-bar">
+                    <div class="progress-fill" style="width: ${(systemStatus.averageReward * 100)}%"></div>
+                </div>
+                
+                <div class="metric">
+                    <span class="metric-label">System Stability:</span>
+                    <span class="metric-value">${(systemStatus.systemStability * 100).toFixed(1)}%</span>
+                </div>
+                <div class="progress-bar">
+                    <div class="progress-fill" style="width: ${(systemStatus.systemStability * 100)}%"></div>
+                </div>
+                
+                <div class="metric">
+                    <span class="metric-label">Total Adaptations:</span>
+                    <span class="metric-value">${systemStatus.totalAdaptations}</span>
+                </div>
+            </div>
+
+            ${systemStatus.recentPerformance ? `
+            <div class="status-card">
+                <div class="status-header">Recent Performance</div>
+                <div class="metric">
+                    <span class="metric-label">F1 Score:</span>
+                    <span class="metric-value">${(systemStatus.recentPerformance.f1Score * 100).toFixed(1)}%</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Precision:</span>
+                    <span class="metric-value">${(systemStatus.recentPerformance.precision * 100).toFixed(1)}%</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Recall:</span>
+                    <span class="metric-value">${(systemStatus.recentPerformance.recall * 100).toFixed(1)}%</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Fault Detection Rate:</span>
+                    <span class="metric-value">${(systemStatus.recentPerformance.faultDetectionRate * 100).toFixed(1)}%</span>
+                </div>
+            </div>
+            ` : ''}
+
+            ${systemStatus.policyStatistics ? `
+            <div class="status-card">
+                <div class="status-header">Policy Status</div>
+                <div class="metric">
+                    <span class="metric-label">Selection Threshold:</span>
+                    <span class="metric-value">${systemStatus.policyStatistics.parameterValues.selectionThreshold.toFixed(3)}</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Priority Boost Factor:</span>
+                    <span class="metric-value">${systemStatus.policyStatistics.parameterValues.priorityBoostFactor.toFixed(3)}</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Policy Stability:</span>
+                    <span class="metric-value">${(systemStatus.policyStatistics.currentStability * 100).toFixed(1)}%</span>
+                </div>
+            </div>
+            ` : ''}
+
+            ${recommendations.length > 0 ? `
+            <div class="status-card">
+                <div class="status-header">💡 Recommendations</div>
+                ${recommendations.map((rec: string) => `<div class="recommendation">${rec}</div>`).join('')}
+            </div>
+            ` : ''}
+            
+            <div class="status-card">
+                <div class="status-header">Actions</div>
+                <button onclick="vscode.postMessage({command: 'toggle-rl'})">
+                    ${isEnabled ? 'Disable' : 'Enable'} RL System
+                </button>
+                <button onclick="vscode.postMessage({command: 'refresh'})">
+                    🔄 Refresh Status
+                </button>
+            </div>
+
+            <script>
+                const vscode = acquireVsCodeApi();
+                
+                // Handle button clicks
+                window.addEventListener('message', event => {
+                    const message = event.data;
+                    switch (message.command) {
+                        case 'toggle-rl':
+                            vscode.postMessage({command: 'sikg.toggleRL'});
+                            break;
+                        case 'refresh':
+                            location.reload();
+                            break;
+                    }
+                });
+            </script>
+        </body>
+        </html>
+    `;
 }
 
 function setupEventListeners(context: vscode.ExtensionContext) {
     // Listen for git changes when users save files with error handling
     context.subscriptions.push(
-        vscode.workspace.onDidSaveTextDocument(async (document) => {
+        vscode.workspace.onDidSaveTextDocument(async (document: vscode.TextDocument) => {
             try {
                 const config = vscode.workspace.getConfiguration('sikg');
                 const analyzeOnSave = config.get<boolean>('analyzeOnSave', false);
@@ -459,7 +1007,7 @@ function setupEventListeners(context: vscode.ExtensionContext) {
     
     // Listen for test executions to gather feedback data with error handling
     context.subscriptions.push(
-        vscode.tasks.onDidEndTaskProcess(async (event) => {
+        vscode.tasks.onDidEndTaskProcess(async (event: vscode.TaskProcessEndEvent) => {
             try {
                 // Check if this is a test run task
                 if (event.execution.task.group === vscode.TaskGroup.Test) {
@@ -480,7 +1028,7 @@ function setupEventListeners(context: vscode.ExtensionContext) {
     
     // Listen for configuration changes
     context.subscriptions.push(
-        vscode.workspace.onDidChangeConfiguration(async (event) => {
+        vscode.workspace.onDidChangeConfiguration(async (event: vscode.ConfigurationChangeEvent) => {
             try {
                 if (event.affectsConfiguration('sikg')) {
                     Logger.info('SIKG configuration changed, reinitializing...');
@@ -518,7 +1066,7 @@ async function diagnoseLangaugeIssues(): Promise<void> {
             vscode.window.showWarningMessage(
                 'Python language not supported by VS Code. Install the Python extension.',
                 'Install Python Extension'
-            ).then(action => {
+            ).then((action: string | undefined) => {
                 if (action === 'Install Python Extension') {
                     vscode.commands.executeCommand('workbench.extensions.search', 'ms-python.python');
                 }

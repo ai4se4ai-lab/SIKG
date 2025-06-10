@@ -1,15 +1,24 @@
 {
   "name": "vscode-sikg",
   "displayName": "SIKG - Semantic Impact Knowledge Graph",
-  "description": "Intelligently select test cases based on semantic change impact analysis",
-  "version": "0.1.0",
+  "description": "Intelligently select test cases based on semantic change impact analysis with reinforcement learning",
+  "version": "0.2.0",
   "publisher": "sikg",
   "engines": {
     "vscode": "^1.70.0"
   },
   "categories": [
     "Testing",
+    "Machine Learning",
     "Other"
+  ],
+  "keywords": [
+    "testing",
+    "test-selection",
+    "machine-learning",
+    "reinforcement-learning",
+    "python",
+    "semantic-analysis"
   ],
   "activationEvents": [
     "onStartupFinished"
@@ -18,14 +27,49 @@
   "contributes": {
     "commands": [
       {
+        "command": "sikg.analyzeHistory",
+        "title": "SIKG: Analyze Git History",
+        "icon": "$(history)"
+      },
+      {
+        "command": "sikg.analyzeChanges",
+        "title": "SIKG: Analyze Code Changes",
+        "icon": "$(diff)"
+      },
+      {
+        "command": "sikg.analyzeChangesWithGit",
+        "title": "SIKG: Analyze Changes with Git",
+        "icon": "$(git-graph)"
+      },
+      {
         "command": "sikg.analyzeChanges",
         "title": "SIKG: Analyze Changes and Prioritize Tests",
         "icon": "$(testing-run-icon)"
       },
       {
+        "command": "sikg.analyzeChangesWithRL",
+        "title": "SIKG: Analyze Changes with RL Enhancement",
+        "icon": "$(robot)"
+      },
+      {
         "command": "sikg.runPrioritizedTests",
         "title": "SIKG: Run Prioritized Tests",
         "icon": "$(play)"
+      },
+      {
+        "command": "sikg.showRLStatus",
+        "title": "SIKG: Show RL System Status",
+        "icon": "$(graph-line)"
+      },
+      {
+        "command": "sikg.toggleRL",
+        "title": "SIKG: Toggle Reinforcement Learning",
+        "icon": "$(robot)"
+      },
+      {
+        "command": "sikg.showRLRecommendations",
+        "title": "SIKG: Show RL Recommendations",
+        "icon": "$(lightbulb)"
       },
       {
         "command": "sikg.visualizeGraph",
@@ -51,7 +95,32 @@
         "command": "sikg.fixLanguageIssues",
         "title": "SIKG: Fix Language Issues",
         "icon": "$(tools)"
-      }
+      },
+      {
+      "command": "sikg.generateReport",
+      "title": "SIKG: Generate Performance Report",
+      "icon": "$(graph)"
+      },
+      {
+        "command": "sikg.showDocumentation",
+        "title": "SIKG: Open Documentation",
+        "icon": "$(book)"
+      },
+      {
+        "command": "sikg.showAbout",
+        "title": "SIKG: About",
+        "icon": "$(info)"
+      },
+      {
+        "command": "sikg.showSettings",
+        "title": "SIKG: Open Settings",
+        "icon": "$(settings-gear)"
+      },
+      {
+        "command": "sikg.showMetrics",
+        "title": "SIKG: Show Performance Metrics",
+        "icon": "$(pulse)"
+    }
     ],
     "viewsContainers": {
       "activitybar": [
@@ -75,17 +144,52 @@
     "menus": {
       "view/title": [
         {
+          "command": "sikg.analyzeChangesWithRL",
+          "when": "view == sikgView",
+          "group": "navigation@1"
+        },
+        {
           "command": "sikg.analyzeChanges",
           "when": "view == sikgView",
-          "group": "navigation"
+          "group": "navigation@2"
         },
         {
           "command": "sikg.runPrioritizedTests",
           "when": "view == sikgView",
-          "group": "navigation"
+          "group": "navigation@3"
+        },
+        {
+          "command": "sikg.showRLStatus",
+          "when": "view == sikgView",
+          "group": "rl@1"
+        },
+        {
+          "command": "sikg.toggleRL",
+          "when": "view == sikgView",
+          "group": "rl@2"
         }
       ],
       "commandPalette": [
+        {
+          "command": "sikg.analyzeHistory",
+          "when": "true"
+        },
+        {
+          "command": "sikg.analyzeChangesWithRL",
+          "when": "true"
+        },
+        {
+          "command": "sikg.showRLStatus",
+          "when": "true"
+        },
+        {
+          "command": "sikg.toggleRL",
+          "when": "true"
+        },
+        {
+          "command": "sikg.showRLRecommendations",
+          "when": "true"
+        },
         {
           "command": "sikg.diagnoseLangaugeIssues",
           "when": "true"
@@ -99,6 +203,122 @@
     "configuration": {
       "title": "SIKG",
       "properties": {
+        "sikg.reinforcementLearning": {
+          "type": "object",
+          "default": {
+            "enabled": true,
+            "learningRate": 0.01,
+            "explorationRate": 0.1,
+            "adaptationInterval": 300000,
+            "performanceThreshold": 0.6
+          },
+          "description": "Reinforcement Learning configuration",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": true,
+              "description": "Enable reinforcement learning for adaptive test selection"
+            },
+            "learningRate": {
+              "type": "number",
+              "default": 0.01,
+              "minimum": 0.001,
+              "maximum": 0.1,
+              "description": "Learning rate for RL adaptation (0.001-0.1)"
+            },
+            "explorationRate": {
+              "type": "number",
+              "default": 0.1,
+              "minimum": 0.01,
+              "maximum": 0.5,
+              "description": "Exploration rate for RL policy (0.01-0.5)"
+            },
+            "adaptationInterval": {
+              "type": "number",
+              "default": 300000,
+              "description": "Minimum time between RL adaptations (milliseconds)"
+            },
+            "performanceThreshold": {
+              "type": "number",
+              "default": 0.6,
+              "minimum": 0.1,
+              "maximum": 1.0,
+              "description": "Performance threshold for triggering adaptations (0.1-1.0)"
+            }
+          }
+        },
+        "sikg.weightUpdates": {
+          "type": "object",
+          "default": {
+            "significanceThreshold": 0.2,
+            "minWeight": 0.1,
+            "maxWeight": 2.0,
+            "decayFactor": 0.99
+          },
+          "description": "Knowledge graph weight update configuration",
+          "properties": {
+            "significanceThreshold": {
+              "type": "number",
+              "default": 0.2,
+              "minimum": 0.05,
+              "maximum": 0.5,
+              "description": "Minimum prediction error for weight updates (0.05-0.5)"
+            },
+            "minWeight": {
+              "type": "number",
+              "default": 0.1,
+              "minimum": 0.01,
+              "maximum": 0.5,
+              "description": "Minimum edge weight (0.01-0.5)"
+            },
+            "maxWeight": {
+              "type": "number",
+              "default": 2.0,
+              "minimum": 1.0,
+              "maximum": 5.0,
+              "description": "Maximum edge weight (1.0-5.0)"
+            },
+            "decayFactor": {
+              "type": "number",
+              "default": 0.99,
+              "minimum": 0.9,
+              "maximum": 1.0,
+              "description": "Weight decay factor to prevent overfitting (0.9-1.0)"
+            }
+          }
+        },
+        "sikg.policy": {
+          "type": "object",
+          "default": {
+            "adaptationRate": 0.1,
+            "diversityWeight": 0.1,
+            "riskTolerance": 0.6
+          },
+          "description": "Test selection policy configuration",
+          "properties": {
+            "adaptationRate": {
+              "type": "number",
+              "default": 0.1,
+              "minimum": 0.01,
+              "maximum": 0.5,
+              "description": "Rate of policy parameter adaptation (0.01-0.5)"
+            },
+            "diversityWeight": {
+              "type": "number",
+              "default": 0.1,
+              "minimum": 0.0,
+              "maximum": 0.5,
+              "description": "Weight for test diversity in selection (0.0-0.5)"
+            },
+            "riskTolerance": {
+              "type": "number",
+              "default": 0.6,
+              "minimum": 0.1,
+              "maximum": 1.0,
+              "description": "Risk tolerance for false negatives (0.1-1.0)"
+            }
+          }
+        },
         "sikg.logLevel": {
           "type": "string",
           "enum": [
@@ -241,15 +461,20 @@
     "watch": "tsc -watch -p ./",
     "pretest": "npm run compile",
     "test": "node ./out/test/runTest.js",
-    "package": "vsce package"
+    "package": "vsce package",
+    "lint": "eslint src --ext ts",
+    "lint:fix": "eslint src --ext ts --fix"
   },
   "devDependencies": {
     "@types/glob": "^7.2.0",
     "@types/mocha": "^10.0.1",
     "@types/node": "16.x",
     "@types/vscode": "^1.70.0",
+    "@typescript-eslint/eslint-plugin": "^5.59.0",
+    "@typescript-eslint/parser": "^5.59.0",
     "@vscode/test-electron": "^2.3.0",
     "@vscode/vsce": "^2.19.0",
+    "eslint": "^8.40.0",
     "glob": "^8.1.0",
     "mocha": "^10.2.0",
     "typescript": "^5.0.4"
@@ -257,5 +482,19 @@
   "dependencies": {
     "crypto": "^1.0.1",
     "d3": "^7.9.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ai4se4ai-lab/SIKG.git.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ai4se4ai-lab/SIKG.git/issues"
+  },
+  "homepage": "https://github.com/ai4se4ai-lab/SIKG.git#readme",
+  "license": "MIT",
+  "icon": "icon.png",
+  "galleryBanner": {
+    "color": "#1e1e1e",
+    "theme": "dark"
   }
 }
