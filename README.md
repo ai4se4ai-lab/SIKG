@@ -230,7 +230,7 @@ Currently, SIKG provides **full support for Python** with extensible architectur
 | **Go** | 🔶 **Basic** | Generic parsing, limited test detection |
 | **Other** | ⚪ **Generic** | File-level analysis only |
 
-> **Extending Language Support**: See the [Adding Language Support](#adding-language-support) section for detailed instructions on implementing full support for additional languages.
+> **Extending Language Support**: See the [Adding Language Support](language_support_guide.md) section for detailed instructions on implementing full support for additional languages.
 
 ### Test Detection
 
@@ -257,7 +257,7 @@ SIKG currently provides comprehensive test detection for **Python frameworks**:
 }
 ```
 
-> **Other Languages**: Basic test detection is available for JavaScript (`.test.js`, `.spec.js`), Java (`*Test.java`), and other languages through generic patterns. See [Adding Language Support](#adding-language-support) for implementing comprehensive test detection.
+> **Other Languages**: Basic test detection is available for JavaScript (`.test.js`, `.spec.js`), Java (`*Test.java`), and other languages through generic patterns. See [Adding Language Support](language_support_guide.md) for implementing comprehensive test detection.
 
 ### Impact Thresholds
 
