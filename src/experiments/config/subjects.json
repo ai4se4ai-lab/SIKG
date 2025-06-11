@@ -1,0 +1,435 @@
+{
+  "subjects": [
+    {
+      "name": "requests",
+      "repositoryUrl": "https://github.com/psf/requests",
+      "localPath": "./test-subjects/requests",
+      "language": "python",
+      "testFramework": "pytest",
+      "size": "medium",
+      "linesOfCode": 8500,
+      "testCount": 150,
+      "commitCount": 2500,
+      "description": "HTTP library for Python",
+      "category": "library",
+      "complexity": "medium",
+      "testCoverage": 0.85,
+      "faultHistory": {
+        "averageFaultsPerCommit": 0.12,
+        "mostFaultyModules": ["requests/models.py", "requests/sessions.py"]
+      }
+    },
+    {
+      "name": "flask",
+      "repositoryUrl": "https://github.com/pallets/flask",
+      "localPath": "./test-subjects/flask",
+      "language": "python",
+      "testFramework": "pytest",
+      "size": "medium",
+      "linesOfCode": 12000,
+      "testCount": 300,
+      "commitCount": 3500,
+      "description": "Lightweight web framework",
+      "category": "framework",
+      "complexity": "medium",
+      "testCoverage": 0.92,
+      "faultHistory": {
+        "averageFaultsPerCommit": 0.08,
+        "mostFaultyModules": ["flask/app.py", "flask/blueprints.py"]
+      }
+    },
+    {
+      "name": "click",
+      "repositoryUrl": "https://github.com/pallets/click",
+      "localPath": "./test-subjects/click",
+      "language": "python",
+      "testFramework": "pytest",
+      "size": "small",
+      "linesOfCode": 4500,
+      "testCount": 200,
+      "commitCount": 1200,
+      "description": "Command line interface creation toolkit",
+      "category": "utility",
+      "complexity": "low",
+      "testCoverage": 0.88,
+      "faultHistory": {
+        "averageFaultsPerCommit": 0.05,
+        "mostFaultyModules": ["click/core.py", "click/options.py"]
+      }
+    },
+    {
+      "name": "httpx",
+      "repositoryUrl": "https://github.com/encode/httpx",
+      "localPath": "./test-subjects/httpx",
+      "language": "python",
+      "testFramework": "pytest",
+      "size": "medium",
+      "linesOfCode": 15000,
+      "testCount": 400,
+      "commitCount": 1800,
+      "description": "Next generation HTTP client",
+      "category": "library",
+      "complexity": "high",
+      "testCoverage": 0.95,
+      "faultHistory": {
+        "averageFaultsPerCommit": 0.15,
+        "mostFaultyModules": ["httpx/_client.py", "httpx/_transports.py"]
+      }
+    },
+    {
+      "name": "pydantic",
+      "repositoryUrl": "https://github.com/pydantic/pydantic",
+      "localPath": "./test-subjects/pydantic",
+      "language": "python",
+      "testFramework": "pytest",
+      "size": "large",
+      "linesOfCode": 25000,
+      "testCount": 800,
+      "commitCount": 4000,
+      "description": "Data validation using Python type hints",
+      "category": "library",
+      "complexity": "high",
+      "testCoverage": 0.90,
+      "faultHistory": {
+        "averageFaultsPerCommit": 0.18,
+        "mostFaultyModules": ["pydantic/main.py", "pydantic/validators.py"]
+      }
+    },
+    {
+      "name": "fastapi",
+      "repositoryUrl": "https://github.com/tiangolo/fastapi",
+      "localPath": "./test-subjects/fastapi",
+      "language": "python",
+      "testFramework": "pytest",
+      "size": "large",
+      "linesOfCode": 18000,
+      "testCount": 650,
+      "commitCount": 2200,
+      "description": "Modern web framework for building APIs",
+      "category": "framework",
+      "complexity": "high",
+      "testCoverage": 0.87,
+      "faultHistory": {
+        "averageFaultsPerCommit": 0.14,
+        "mostFaultyModules": ["fastapi/applications.py", "fastapi/routing.py"]
+      }
+    },
+    {
+      "name": "pytest",
+      "repositoryUrl": "https://github.com/pytest-dev/pytest",
+      "localPath": "./test-subjects/pytest",
+      "language": "python",
+      "testFramework": "pytest",
+      "size": "large",
+      "linesOfCode": 35000,
+      "testCount": 1200,
+      "commitCount": 8000,
+      "description": "Testing framework",
+      "category": "testing",
+      "complexity": "high",
+      "testCoverage": 0.93,
+      "faultHistory": {
+        "averageFaultsPerCommit": 0.10,
+        "mostFaultyModules": ["_pytest/main.py", "_pytest/python.py"]
+      }
+    },
+    {
+      "name": "rich",
+      "repositoryUrl": "https://github.com/Textualize/rich",
+      "localPath": "./test-subjects/rich",
+      "language": "python",
+      "testFramework": "pytest",
+      "size": "medium",
+      "linesOfCode": 12000,
+      "testCount": 350,
+      "commitCount": 1500,
+      "description": "Rich text and beautiful formatting",
+      "category": "utility",
+      "complexity": "medium",
+      "testCoverage": 0.89,
+      "faultHistory": {
+        "averageFaultsPerCommit": 0.07,
+        "mostFaultyModules": ["rich/console.py", "rich/text.py"]
+      }
+    },
+    {
+      "name": "scrapy",
+      "repositoryUrl": "https://github.com/scrapy/scrapy",
+      "localPath": "./test-subjects/scrapy",
+      "language": "python",
+      "testFramework": "pytest",
+      "size": "large",
+      "linesOfCode": 45000,
+      "testCount": 900,
+      "commitCount": 6500,
+      "description": "Web crawling and scraping framework",
+      "category": "framework",
+      "complexity": "high",
+      "testCoverage": 0.82,
+      "faultHistory": {
+        "averageFaultsPerCommit": 0.16,
+        "mostFaultyModules": ["scrapy/core/engine.py", "scrapy/spiders/__init__.py"]
+      }
+    },
+    {
+      "name": "sqlalchemy",
+      "repositoryUrl": "https://github.com/sqlalchemy/sqlalchemy",
+      "localPath": "./test-subjects/sqlalchemy",
+      "language": "python",
+      "testFramework": "pytest",
+      "size": "large",
+      "linesOfCode": 65000,
+      "testCount": 1500,
+      "commitCount": 12000,
+      "description": "SQL toolkit and Object-Relational Mapping",
+      "category": "database",
+      "complexity": "high",
+      "testCoverage": 0.91,
+      "faultHistory": {
+        "averageFaultsPerCommit": 0.13,
+        "mostFaultyModules": ["sqlalchemy/engine/base.py", "sqlalchemy/orm/session.py"]
+      }
+    },
+    {
+      "name": "typer",
+      "repositoryUrl": "https://github.com/tiangolo/typer",
+      "localPath": "./test-subjects/typer",
+      "language": "python",
+      "testFramework": "pytest",
+      "size": "small",
+      "linesOfCode": 3500,
+      "testCount": 120,
+      "commitCount": 800,
+      "description": "CLI library based on type hints",
+      "category": "utility",
+      "complexity": "low",
+      "testCoverage": 0.85,
+      "faultHistory": {
+        "averageFaultsPerCommit": 0.06,
+        "mostFaultyModules": ["typer/main.py", "typer/models.py"]
+      }
+    },
+    {
+      "name": "pandas",
+      "repositoryUrl": "https://github.com/pandas-dev/pandas",
+      "localPath": "./test-subjects/pandas",
+      "language": "python",
+      "testFramework": "pytest",
+      "size": "large",
+      "linesOfCode": 150000,
+      "testCount": 3500,
+      "commitCount": 25000,
+      "description": "Data analysis and manipulation library",
+      "category": "data-science",
+      "complexity": "high",
+      "testCoverage": 0.88,
+      "faultHistory": {
+        "averageFaultsPerCommit": 0.20,
+        "mostFaultyModules": ["pandas/core/frame.py", "pandas/core/series.py"]
+      }
+    },
+    {
+      "name": "django",
+      "repositoryUrl": "https://github.com/django/django",
+      "localPath": "./test-subjects/django",
+      "language": "python",
+      "testFramework": "unittest",
+      "size": "large",
+      "linesOfCode": 120000,
+      "testCount": 2800,
+      "commitCount": 30000,
+      "description": "High-level web framework",
+      "category": "framework",
+      "complexity": "high",
+      "testCoverage": 0.86,
+      "faultHistory": {
+        "averageFaultsPerCommit": 0.11,
+        "mostFaultyModules": ["django/db/models/base.py", "django/http/request.py"]
+      }
+    },
+    {
+      "name": "numpy",
+      "repositoryUrl": "https://github.com/numpy/numpy",
+      "localPath": "./test-subjects/numpy",
+      "language": "python",
+      "testFramework": "pytest",
+      "size": "large",
+      "linesOfCode": 85000,
+      "testCount": 2200,
+      "commitCount": 20000,
+      "description": "Fundamental package for scientific computing",
+      "category": "data-science",
+      "complexity": "high",
+      "testCoverage": 0.84,
+      "faultHistory": {
+        "averageFaultsPerCommit": 0.17,
+        "mostFaultyModules": ["numpy/core/numeric.py", "numpy/lib/function_base.py"]
+      }
+    },
+    {
+      "name": "tornado",
+      "repositoryUrl": "https://github.com/tornadoweb/tornado",
+      "localPath": "./test-subjects/tornado",
+      "language": "python",
+      "testFramework": "unittest",
+      "size": "medium",
+      "linesOfCode": 22000,
+      "testCount": 450,
+      "commitCount": 4500,
+      "description": "Scalable web framework and asynchronous networking library",
+      "category": "framework",
+      "complexity": "high",
+      "testCoverage": 0.80,
+      "faultHistory": {
+        "averageFaultsPerCommit": 0.12,
+        "mostFaultyModules": ["tornado/web.py", "tornado/ioloop.py"]
+      }
+    }
+  ],
+  "categories": {
+    "small": {
+      "criteria": "< 5000 LOC",
+      "projects": ["click", "typer"],
+      "characteristics": [
+        "Simple architecture",
+        "Few dependencies",
+        "Focused functionality",
+        "Low fault density"
+      ]
+    },
+    "medium": {
+      "criteria": "5000-25000 LOC",
+      "projects": ["requests", "flask", "httpx", "rich", "tornado"],
+      "characteristics": [
+        "Moderate complexity",
+        "Multiple modules",
+        "Balanced test coverage",
+        "Moderate fault patterns"
+      ]
+    },
+    "large": {
+      "criteria": "> 25000 LOC",
+      "projects": ["pydantic", "fastapi", "pytest", "scrapy", "sqlalchemy", "pandas", "django", "numpy"],
+      "characteristics": [
+        "Complex architecture",
+        "Extensive test suites",
+        "High interdependency",
+        "Varied fault patterns"
+      ]
+    }
+  },
+  "testFrameworks": {
+    "pytest": {
+      "projects": 13,
+      "testDiscoveryPattern": "test_*.py",
+      "executionCommand": "python -m pytest",
+      "characteristics": [
+        "Flexible fixture system",
+        "Parametrized testing",
+        "Plugin ecosystem"
+      ]
+    },
+    "unittest": {
+      "projects": 2,
+      "testDiscoveryPattern": "test*.py",
+      "executionCommand": "python -m unittest",
+      "characteristics": [
+        "Built-in Python framework",
+        "Class-based test organization",
+        "Standard library integration"
+      ]
+    }
+  },
+  "domainDistribution": {
+    "library": {
+      "count": 5,
+      "examples": ["requests", "httpx", "pydantic"],
+      "characteristics": "Reusable components with clear APIs"
+    },
+    "framework": {
+      "count": 6,
+      "examples": ["flask", "fastapi", "django", "scrapy"],
+      "characteristics": "Complex architectures with plugin systems"
+    },
+    "utility": {
+      "count": 3,
+      "examples": ["click", "rich", "typer"],
+      "characteristics": "Focused tools with specific use cases"
+    },
+    "data-science": {
+      "count": 2,
+      "examples": ["pandas", "numpy"],
+      "characteristics": "Mathematical operations and data processing"
+    },
+    "testing": {
+      "count": 1,
+      "examples": ["pytest"],
+      "characteristics": "Meta-testing framework"
+    },
+    "database": {
+      "count": 1,
+      "examples": ["sqlalchemy"],
+      "characteristics": "Data persistence and ORM"
+    }
+  },
+  "experimentConfiguration": {
+    "recommendedSubsets": {
+      "quick_validation": {
+        "subjects": ["click", "typer", "rich"],
+        "iterations": 10,
+        "description": "Fast validation on small to medium projects"
+      },
+      "comprehensive_evaluation": {
+        "subjects": ["requests", "flask", "httpx", "pydantic", "fastapi"],
+        "iterations": 30,
+        "description": "Balanced evaluation across project sizes"
+      },
+      "scalability_analysis": {
+        "subjects": ["click", "flask", "pytest", "pandas"],
+        "iterations": 20,
+        "description": "Scalability across project sizes"
+      },
+      "framework_comparison": {
+        "subjects": ["flask", "fastapi", "django", "tornado"],
+        "iterations": 25,
+        "description": "Web framework specific analysis"
+      },
+      "full_evaluation": {
+        "subjects": "all",
+        "iterations": 30,
+        "description": "Complete evaluation across all projects"
+      }
+    },
+    "commitRanges": {
+      "recent": {
+        "range": "HEAD~50",
+        "description": "Recent commits for current patterns"
+      },
+      "historical": {
+        "range": "HEAD~200",
+        "description": "Historical analysis for trends"
+      },
+      "release_focused": {
+        "pattern": "tags",
+        "description": "Major release commits only"
+      }
+    }
+  },
+  "metadata": {
+    "version": "1.0.0",
+    "lastUpdated": "2024-12-19",
+    "totalProjects": 15,
+    "sizeCoverage": {
+      "small": 2,
+      "medium": 5,
+      "large": 8
+    },
+    "domainCoverage": 6,
+    "testFrameworkCoverage": 2,
+    "estimatedAnalysisTime": {
+      "quick_validation": "30 minutes",
+      "comprehensive_evaluation": "2 hours",
+      "full_evaluation": "6 hours"
+    }
+  }
+}
