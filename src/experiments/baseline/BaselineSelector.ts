@@ -181,6 +181,13 @@ export abstract class AbstractBaselineSelector implements AdvancedBaselineSelect
     ): Promise<string[]>;
 
     /**
+     * Prioritize the selected tests - must be implemented by subclasses
+     * @param selectedTests Array of selected test identifiers
+     * @returns Array of prioritized test identifiers
+     */
+    public abstract prioritizeTests(selectedTests: string[]): string[];
+
+    /**
      * Get basic selection statistics
      */
     public getSelectionStats(

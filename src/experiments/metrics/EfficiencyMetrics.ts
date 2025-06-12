@@ -1,635 +1,551 @@
-// EfficiencyMetrics.ts - Efficiency evaluation metrics for SIKG experiments
+// EfficiencyMetrics.ts - Test execution efficiency and performance metrics
 
+import { ExperimentData } from '../data/DataCollector';
 import { Logger } from '../../utils/Logger';
 
-/**
- * Test execution timing data
- */
-export interface ExecutionTiming {
-    analysisTime: number;           // Time spent on SIKG analysis (ms)
-    selectionTime: number;          // Time spent on test selection (ms)
-    executionTime: number;          // Time spent executing selected tests (ms)
-    totalTime: number;              // Total time including overhead (ms)
-    baselineExecutionTime?: number; // Time for full test suite execution (ms)
+export interface TimingBreakdown {
+    kgConstruction: number;       // ms
+    semanticAnalysis: number;     // ms
+    impactPropagation: number;    // ms
+    testSelection: number;        // ms
+    rlAdaptation: number;         // ms
+    total: number;                // ms
 }
 
-/**
- * Test reduction metrics
- */
-export interface ReductionMetrics {
-    totalTests: number;             // Total tests in suite
-    selectedTests: number;          // Tests selected by SIKG
-    reductionRatio: number;         // Percentage of tests reduced (0-1)
-    reductionAbsolute: number;      // Absolute number of tests saved
-    selectionAccuracy: number;      // Accuracy of test selection (0-1)
+export interface ResourceUsage {
+    peakMemoryMB: number;         // Peak memory usage in MB
+    avgMemoryMB: number;          // Average memory usage in MB
+    cpuUtilization: number;       // CPU utilization percentage (0-100)
+    diskIOKB: number;             // Disk I/O in KB
+    graphSizeKB: number;          // Knowledge graph size in KB
 }
 
-/**
- * Overhead analysis metrics
- */
-export interface OverheadMetrics {
-    analysisOverhead: number;       // Analysis time as % of saved time
-    memoryOverhead: number;         // Additional memory usage (MB)
-    storageOverhead: number;        // Graph storage requirements (MB)
-    networkOverhead: number;        // Additional network usage (MB)
-    setupTime: number;              // One-time setup overhead (ms)
+export interface EfficiencyMetrics {
+    // Timing metrics
+    timing: TimingBreakdown;
+    
+    // Resource usage
+    resources: ResourceUsage;
+    
+    // Test execution efficiency
+    testExecutionSavings: number;         // ms saved compared to full suite
+    earlyFaultDetectionTime: number;     // ms to detect first fault
+    timeToFirstFault: number;             // ms from start to first fault detection
+    
+    // Throughput metrics
+    testsPerSecond: number;               // Tests analyzed per second
+    changesPerSecond: number;             // Code changes processed per second
+    nodesPerSecond: number;               // Graph nodes processed per second
+    
+    // Efficiency ratios
+    analysisOverhead: number;             // Analysis time / Test execution time saved
+    reductionEfficiency: number;          // Tests reduced / Analysis time
+    costBenefitRatio: number;             // Time saved / Time invested
+    
+    // Scalability indicators
+    timeComplexity: string;               // Observed time complexity (O(n), O(n²), etc.)
+    memoryComplexity: string;             // Observed memory complexity
+    scalingFactor: number;                // Performance degradation factor with size
 }
 
-/**
- * Time savings analysis
- */
-export interface TimeSavingsMetrics {
-    absoluteSavings: number;        // Absolute time saved (ms)
-    relativeSavings: number;        // Relative savings percentage (0-1)
-    savingsPerTest: number;         // Average time saved per test (ms)
-    netSavings: number;             // Savings minus overhead (ms)
-    efficiencyRatio: number;        // Net savings / total baseline time
+export interface PerformanceProfile {
+    approach: string;
+    projectSize: number;                  // LOC
+    testSuiteSize: number;               // Number of tests
+    metrics: EfficiencyMetrics;
+    timestamp: Date;
 }
 
-/**
- * Efficiency comparison between approaches
- */
 export interface EfficiencyComparison {
-    approach: string;
-    reductionRatio: number;
-    timeSavings: number;
-    overhead: number;
-    netEfficiency: number;          // Overall efficiency score
-    rank: number;                   // Ranking among compared approaches
+    baseline: EfficiencyMetrics;
+    sikg: EfficiencyMetrics;
+    improvement: {
+        timeReduction: number;            // % faster
+        memoryReduction: number;          // % less memory
+        throughputIncrease: number;       // % more throughput
+    };
+    significance: 'high' | 'medium' | 'low' | 'none';
 }
 
 /**
- * Comprehensive efficiency metrics result
+ * Calculates and analyzes efficiency metrics for test selection approaches
  */
-export interface EfficiencyMetricsResult {
-    sessionId: string;
-    timestamp: number;
-    projectName: string;
-    approach: string;
-    
-    execution: ExecutionTiming;
-    reduction: ReductionMetrics;
-    overhead: OverheadMetrics;
-    savings: TimeSavingsMetrics;
-    
-    // Derived efficiency scores
-    overallEfficiency: number;      // Combined efficiency score (0-1)
-    costBenefit: number;           // Benefit/cost ratio
-    performanceGain: number;       // Performance improvement factor
-    
-    // Statistical metadata
-    sampleSize: number;
-    confidence: number;
-    statisticalSignificance?: boolean;
-}
+export class EfficiencyMetricsCalculator {
+    private performanceProfiles: PerformanceProfile[] = [];
+    private baselineProfiles: Map<string, PerformanceProfile[]> = new Map();
 
-/**
- * Efficiency trends over multiple sessions
- */
-export interface EfficiencyTrends {
-    sessions: EfficiencyMetricsResult[];
-    averageEfficiency: number;
-    efficiencyTrend: 'improving' | 'declining' | 'stable';
-    improvementRate: number;        // Rate of efficiency improvement over time
-    stabilityScore: number;         // Consistency of efficiency (0-1)
-}
-
-/**
- * Resource utilization metrics
- */
-export interface ResourceUtilization {
-    cpuUsage: number;              // Average CPU usage percentage
-    memoryPeak: number;            // Peak memory usage (MB)
-    memoryAverage: number;         // Average memory usage (MB)
-    diskIO: number;                // Disk I/O operations
-    networkRequests: number;       // Network requests made
-    cacheHitRatio: number;         // Cache efficiency ratio (0-1)
-}
-
-/**
- * Scalability metrics for efficiency analysis
- */
-export interface ScalabilityMetrics {
-    testSuiteSize: number;
-    analysisTimeGrowth: number;    // Growth rate of analysis time
-    memoryGrowth: number;          // Growth rate of memory usage
-    efficiencyAtScale: number;     // Efficiency at this scale
-    scalingFactor: number;         // How well efficiency scales
-}
-
-/**
- * Configuration for efficiency evaluation
- */
-export interface EfficiencyConfig {
-    includeOverhead: boolean;
-    measureResourceUsage: boolean;
-    trackMemoryUsage: boolean;
-    enableProfiling: boolean;
-    baselineComparison: boolean;
-    statisticalValidation: boolean;
-    confidenceLevel: number;       // Statistical confidence level
-    minSampleSize: number;         // Minimum samples for valid results
-}
-
-/**
- * SIKG Efficiency Metrics Calculator
- * Evaluates the efficiency of SIKG test selection and prioritization
- */
-export class EfficiencyMetrics {
-    private config: EfficiencyConfig;
-    private results: EfficiencyMetricsResult[] = [];
-    private baselineResults: Map<string, EfficiencyMetricsResult[]> = new Map();
-    
-    constructor(config?: Partial<EfficiencyConfig>) {
-        this.config = {
-            includeOverhead: true,
-            measureResourceUsage: true,
-            trackMemoryUsage: true,
-            enableProfiling: false,
-            baselineComparison: true,
-            statisticalValidation: true,
-            confidenceLevel: 0.95,
-            minSampleSize: 10,
-            ...config
-        };
+    constructor() {
+        this.initializeBaselines();
     }
 
     /**
-     * Calculate comprehensive efficiency metrics for a test session
+     * Calculate efficiency metrics from experiment data
      */
-    public calculateEfficiencyMetrics(
-        sessionData: {
-            sessionId: string;
-            projectName: string;
-            approach: string;
-            totalTests: number;
-            selectedTests: number;
-            executedTests: number;
-            analysisTime: number;
-            selectionTime: number;
-            executionTime: number;
-            baselineExecutionTime?: number;
-            faultsDetected: number;
-            resourceUsage?: ResourceUtilization;
-        }
-    ): EfficiencyMetricsResult {
+    public calculateEfficiencyMetrics(data: ExperimentData, timing?: TimingBreakdown, resources?: ResourceUsage): EfficiencyMetrics {
+        // Use provided timing or extract from experiment data
+        const timingData = timing || this.extractTimingFromData(data);
+        const resourceData = resources || this.estimateResourceUsage(data);
         
-        Logger.info(`Calculating efficiency metrics for session: ${sessionData.sessionId}`);
-
-        // Calculate execution timing
-        const execution: ExecutionTiming = {
-            analysisTime: sessionData.analysisTime,
-            selectionTime: sessionData.selectionTime,
-            executionTime: sessionData.executionTime,
-            totalTime: sessionData.analysisTime + sessionData.selectionTime + sessionData.executionTime,
-            baselineExecutionTime: sessionData.baselineExecutionTime
-        };
-
-        // Calculate reduction metrics
-        const reduction: ReductionMetrics = this.calculateReductionMetrics(
-            sessionData.totalTests,
-            sessionData.selectedTests,
-            sessionData.executedTests,
-            sessionData.faultsDetected
-        );
-
-        // Calculate overhead metrics
-        const overhead: OverheadMetrics = this.calculateOverheadMetrics(
-            execution,
-            sessionData.resourceUsage
-        );
-
-        // Calculate time savings
-        const savings: TimeSavingsMetrics = this.calculateTimeSavings(
-            execution,
-            reduction,
-            overhead
-        );
-
-        // Calculate derived efficiency scores
-        const overallEfficiency = this.calculateOverallEfficiency(reduction, savings, overhead);
-        const costBenefit = this.calculateCostBenefit(savings, overhead);
-        const performanceGain = this.calculatePerformanceGain(savings, execution);
-
-        const result: EfficiencyMetricsResult = {
-            sessionId: sessionData.sessionId,
-            timestamp: Date.now(),
-            projectName: sessionData.projectName,
-            approach: sessionData.approach,
-            execution,
-            reduction,
-            overhead,
-            savings,
-            overallEfficiency,
-            costBenefit,
-            performanceGain,
-            sampleSize: 1,
-            confidence: 1.0
-        };
-
-        // Store result for trend analysis
-        this.results.push(result);
-
-        // Perform statistical validation if enough samples
-        if (this.config.statisticalValidation && this.results.length >= this.config.minSampleSize) {
-            result.statisticalSignificance = this.validateStatisticalSignificance(result);
-        }
-
-        Logger.info(`Efficiency calculated: ${(overallEfficiency * 100).toFixed(1)}% overall efficiency, ${(reduction.reductionRatio * 100).toFixed(1)}% test reduction`);
-
-        return result;
-    }
-
-    /**
-     * Calculate test reduction metrics
-     */
-    private calculateReductionMetrics(
-        totalTests: number,
-        selectedTests: number,
-        executedTests: number,
-        faultsDetected: number
-    ): ReductionMetrics {
-        const reductionAbsolute = totalTests - selectedTests;
-        const reductionRatio = totalTests > 0 ? reductionAbsolute / totalTests : 0;
+        // Calculate test execution savings
+        const testExecutionSavings = this.calculateTestExecutionSavings(data);
+        const earlyFaultDetectionTime = this.calculateEarlyFaultDetectionTime(data);
         
-        // Selection accuracy based on fault detection effectiveness
-        const selectionAccuracy = selectedTests > 0 ? 
-            Math.min(1.0, (faultsDetected + (selectedTests - faultsDetected) * 0.8) / selectedTests) : 0;
+        // Calculate throughput metrics
+        const testsPerSecond = data.totalTests / Math.max(1, timingData.total / 1000);
+        const changesPerSecond = (data.changedFiles?.length || 1) / Math.max(1, timingData.total / 1000);
+        const nodesPerSecond = this.estimateNodesProcessed(data) / Math.max(1, timingData.total / 1000);
+        
+        // Calculate efficiency ratios
+        const analysisOverhead = timingData.total / Math.max(1, testExecutionSavings);
+        const reductionEfficiency = (data.totalTests - data.selectedTests) / Math.max(1, timingData.total / 1000);
+        const costBenefitRatio = testExecutionSavings / Math.max(1, timingData.total);
+        
+        // Analyze complexity (simplified)
+        const timeComplexity = this.analyzeTimeComplexity(data);
+        const memoryComplexity = this.analyzeMemoryComplexity(resourceData);
+        const scalingFactor = this.calculateScalingFactor(data);
 
         return {
-            totalTests,
-            selectedTests,
-            reductionRatio,
-            reductionAbsolute,
-            selectionAccuracy
-        };
-    }
-
-    /**
-     * Calculate overhead metrics
-     */
-    private calculateOverheadMetrics(
-        execution: ExecutionTiming,
-        resourceUsage?: ResourceUtilization
-    ): OverheadMetrics {
-        const totalOverheadTime = execution.analysisTime + execution.selectionTime;
-        const baselineTime = execution.baselineExecutionTime || execution.executionTime;
-        
-        const analysisOverhead = baselineTime > 0 ? totalOverheadTime / baselineTime : 0;
-        
-        return {
+            timing: timingData,
+            resources: resourceData,
+            testExecutionSavings,
+            earlyFaultDetectionTime,
+            timeToFirstFault: earlyFaultDetectionTime + timingData.total,
+            testsPerSecond,
+            changesPerSecond,
+            nodesPerSecond,
             analysisOverhead,
-            memoryOverhead: resourceUsage?.memoryPeak || 0,
-            storageOverhead: 5, // Estimated graph storage in MB
-            networkOverhead: 0, // No network overhead for local analysis
-            setupTime: execution.analysisTime * 0.1 // Estimated setup overhead
+            reductionEfficiency,
+            costBenefitRatio,
+            timeComplexity,
+            memoryComplexity,
+            scalingFactor
         };
     }
 
     /**
-     * Calculate time savings metrics
+     * Record performance profile for analysis
      */
-    private calculateTimeSavings(
-        execution: ExecutionTiming,
-        reduction: ReductionMetrics,
-        overhead: OverheadMetrics
-    ): TimeSavingsMetrics {
-        const baselineTime = execution.baselineExecutionTime || 
-                           (execution.executionTime * (reduction.totalTests / Math.max(1, reduction.selectedTests)));
+    public recordPerformanceProfile(
+        approach: string,
+        projectSize: number,
+        testSuiteSize: number,
+        metrics: EfficiencyMetrics
+    ): void {
+        const profile: PerformanceProfile = {
+            approach,
+            projectSize,
+            testSuiteSize,
+            metrics,
+            timestamp: new Date()
+        };
+
+        this.performanceProfiles.push(profile);
         
-        const absoluteSavings = Math.max(0, baselineTime - execution.totalTime);
-        const relativeSavings = baselineTime > 0 ? absoluteSavings / baselineTime : 0;
-        const savingsPerTest = reduction.reductionAbsolute > 0 ? 
-                              absoluteSavings / reduction.reductionAbsolute : 0;
+        // Store as baseline if it's a baseline approach
+        if (this.isBaselineApproach(approach)) {
+            if (!this.baselineProfiles.has(approach)) {
+                this.baselineProfiles.set(approach, []);
+            }
+            this.baselineProfiles.get(approach)!.push(profile);
+        }
+
+        Logger.debug(`Recorded performance profile for ${approach}: ${metrics.timing.total}ms, ${metrics.resources.peakMemoryMB}MB`);
+    }
+
+    /**
+     * Compare efficiency between SIKG and baseline approaches
+     */
+    public compareEfficiency(sikgMetrics: EfficiencyMetrics, baselineApproach: string): EfficiencyComparison | null {
+        const baselineProfiles = this.baselineProfiles.get(baselineApproach);
+        if (!baselineProfiles || baselineProfiles.length === 0) {
+            Logger.warn(`No baseline data for ${baselineApproach}`);
+            return null;
+        }
+
+        // Use most recent baseline profile
+        const baselineMetrics = baselineProfiles[baselineProfiles.length - 1].metrics;
+
+        // Calculate improvements
+        const timeReduction = this.calculatePercentageImprovement(
+            baselineMetrics.timing.total, 
+            sikgMetrics.timing.total
+        );
         
-        const totalOverhead = execution.analysisTime + execution.selectionTime + overhead.setupTime;
-        const netSavings = absoluteSavings - totalOverhead;
-        const efficiencyRatio = baselineTime > 0 ? netSavings / baselineTime : 0;
+        const memoryReduction = this.calculatePercentageImprovement(
+            baselineMetrics.resources.peakMemoryMB,
+            sikgMetrics.resources.peakMemoryMB
+        );
+        
+        const throughputIncrease = this.calculatePercentageImprovement(
+            sikgMetrics.testsPerSecond,
+            baselineMetrics.testsPerSecond
+        ) - 100; // Convert to increase rather than decrease
+
+        // Assess significance
+        const significance = this.assessSignificance(timeReduction, memoryReduction, throughputIncrease);
 
         return {
-            absoluteSavings,
-            relativeSavings,
-            savingsPerTest,
-            netSavings,
-            efficiencyRatio
+            baseline: baselineMetrics,
+            sikg: sikgMetrics,
+            improvement: {
+                timeReduction,
+                memoryReduction,
+                throughputIncrease
+            },
+            significance
         };
     }
 
     /**
-     * Calculate overall efficiency score (0-1)
+     * Analyze scalability across different project sizes
      */
-    private calculateOverallEfficiency(
-        reduction: ReductionMetrics,
-        savings: TimeSavingsMetrics,
-        overhead: OverheadMetrics
-    ): number {
-        // Weighted combination of efficiency factors
-        const reductionScore = reduction.reductionRatio * 0.3;
-        const savingsScore = Math.max(0, savings.relativeSavings) * 0.4;
-        const overheadPenalty = Math.min(0.3, overhead.analysisOverhead * 0.1);
-        const accuracyBonus = reduction.selectionAccuracy * 0.2;
-        
-        const efficiency = reductionScore + savingsScore - overheadPenalty + accuracyBonus;
-        return Math.max(0, Math.min(1, efficiency));
-    }
-
-    /**
-     * Calculate cost-benefit ratio
-     */
-    private calculateCostBenefit(
-        savings: TimeSavingsMetrics,
-        overhead: OverheadMetrics
-    ): number {
-        const benefit = savings.absoluteSavings;
-        const cost = overhead.analysisOverhead * savings.absoluteSavings + overhead.setupTime;
-        
-        return cost > 0 ? benefit / cost : 0;
-    }
-
-    /**
-     * Calculate performance gain factor
-     */
-    private calculatePerformanceGain(
-        savings: TimeSavingsMetrics,
-        execution: ExecutionTiming
-    ): number {
-        const baselineTime = execution.baselineExecutionTime || execution.totalTime;
-        return baselineTime > 0 ? baselineTime / execution.totalTime : 1;
-    }
-
-    /**
-     * Compare efficiency across multiple approaches
-     */
-    public compareEfficiency(
-        results: EfficiencyMetricsResult[]
-    ): EfficiencyComparison[] {
-        const comparisons: EfficiencyComparison[] = results.map(result => ({
-            approach: result.approach,
-            reductionRatio: result.reduction.reductionRatio,
-            timeSavings: result.savings.relativeSavings,
-            overhead: result.overhead.analysisOverhead,
-            netEfficiency: result.overallEfficiency,
-            rank: 0
-        }));
-
-        // Rank by overall efficiency
-        comparisons.sort((a, b) => b.netEfficiency - a.netEfficiency);
-        comparisons.forEach((comp, index) => {
-            comp.rank = index + 1;
-        });
-
-        Logger.info(`Efficiency comparison completed: ${comparisons.length} approaches ranked`);
-        return comparisons;
-    }
-
-    /**
-     * Calculate efficiency trends over time
-     */
-    public calculateEfficiencyTrends(sessionCount: number = 20): EfficiencyTrends {
-        const recentSessions = this.results.slice(-sessionCount);
-        
-        if (recentSessions.length < 2) {
+    public analyzeScalability(approach: string): {
+        scalabilityTrend: 'linear' | 'quadratic' | 'exponential' | 'constant';
+        performanceGrowth: number;  // Factor of performance degradation per 10K LOC
+        memoryGrowth: number;       // Factor of memory growth per 10K LOC
+        optimalProjectSize?: number; // LOC where performance is optimal
+    } {
+        const profiles = this.performanceProfiles.filter(p => p.approach === approach);
+        if (profiles.length < 3) {
             return {
-                sessions: recentSessions,
-                averageEfficiency: recentSessions[0]?.overallEfficiency || 0,
-                efficiencyTrend: 'stable',
-                improvementRate: 0,
-                stabilityScore: 0
+                scalabilityTrend: 'constant',
+                performanceGrowth: 1.0,
+                memoryGrowth: 1.0
             };
         }
 
-        const efficiencies = recentSessions.map(s => s.overallEfficiency);
-        const averageEfficiency = efficiencies.reduce((sum, eff) => sum + eff, 0) / efficiencies.length;
-        
-        // Calculate trend
-        const firstHalf = efficiencies.slice(0, Math.floor(efficiencies.length / 2));
-        const secondHalf = efficiencies.slice(Math.floor(efficiencies.length / 2));
-        
-        const firstAvg = firstHalf.reduce((sum, eff) => sum + eff, 0) / firstHalf.length;
-        const secondAvg = secondHalf.reduce((sum, eff) => sum + eff, 0) / secondHalf.length;
-        
-        let efficiencyTrend: 'improving' | 'declining' | 'stable';
-        const improvement = secondAvg - firstAvg;
-        
-        if (improvement > 0.05) {
-            efficiencyTrend = 'improving';
-        } else if (improvement < -0.05) {
-            efficiencyTrend = 'declining';
-        } else {
-            efficiencyTrend = 'stable';
+        // Sort by project size
+        profiles.sort((a, b) => a.projectSize - b.projectSize);
+
+        // Analyze time growth
+        const timeGrowthFactors: number[] = [];
+        const memoryGrowthFactors: number[] = [];
+
+        for (let i = 1; i < profiles.length; i++) {
+            const current = profiles[i];
+            const previous = profiles[i - 1];
+            
+            const sizeRatio = current.projectSize / previous.projectSize;
+            const timeRatio = current.metrics.timing.total / previous.metrics.timing.total;
+            const memoryRatio = current.metrics.resources.peakMemoryMB / previous.metrics.resources.peakMemoryMB;
+            
+            // Normalize to per 10K LOC growth
+            const sizeFactor = sizeRatio * (10000 / (current.projectSize - previous.projectSize));
+            timeGrowthFactors.push(timeRatio / sizeFactor);
+            memoryGrowthFactors.push(memoryRatio / sizeFactor);
         }
 
-        // Calculate improvement rate and stability
-        const improvementRate = recentSessions.length > 1 ? improvement / recentSessions.length : 0;
-        const variance = efficiencies.reduce((sum, eff) => sum + Math.pow(eff - averageEfficiency, 2), 0) / efficiencies.length;
-        const stabilityScore = Math.max(0, 1 - Math.sqrt(variance));
+        const avgTimeGrowth = this.average(timeGrowthFactors);
+        const avgMemoryGrowth = this.average(memoryGrowthFactors);
+
+        // Determine scalability trend
+        let scalabilityTrend: 'linear' | 'quadratic' | 'exponential' | 'constant';
+        if (avgTimeGrowth < 1.1) {
+            scalabilityTrend = 'constant';
+        } else if (avgTimeGrowth < 1.5) {
+            scalabilityTrend = 'linear';
+        } else if (avgTimeGrowth < 2.5) {
+            scalabilityTrend = 'quadratic';
+        } else {
+            scalabilityTrend = 'exponential';
+        }
+
+        // Find optimal project size (if any)
+        const optimalProjectSize = this.findOptimalProjectSize(profiles);
 
         return {
-            sessions: recentSessions,
-            averageEfficiency,
-            efficiencyTrend,
-            improvementRate,
-            stabilityScore
+            scalabilityTrend,
+            performanceGrowth: avgTimeGrowth,
+            memoryGrowth: avgMemoryGrowth,
+            optimalProjectSize
         };
     }
 
     /**
-     * Validate statistical significance of efficiency improvements
+     * Calculate cost-benefit analysis
      */
-    private validateStatisticalSignificance(result: EfficiencyMetricsResult): boolean {
-        // Simplified statistical validation
-        const recentResults = this.results.slice(-this.config.minSampleSize);
+    public calculateCostBenefit(metrics: EfficiencyMetrics, fullSuiteExecutionTime: number): {
+        analysisTime: number;
+        timeSaved: number;
+        netBenefit: number;
+        roi: number; // Return on investment (time saved / time invested)
+        breakEvenPoint: number; // How many test runs to break even
+    } {
+        const analysisTime = metrics.timing.total;
+        const timeSaved = metrics.testExecutionSavings;
+        const netBenefit = timeSaved - analysisTime;
+        const roi = timeSaved / Math.max(1, analysisTime);
+        const breakEvenPoint = analysisTime / Math.max(1, timeSaved);
+
+        return {
+            analysisTime,
+            timeSaved,
+            netBenefit,
+            roi,
+            breakEvenPoint
+        };
+    }
+
+    /**
+     * Generate efficiency summary report
+     */
+    public generateEfficiencySummary(approach: string): {
+        totalProfiles: number;
+        avgExecutionTime: number;
+        avgMemoryUsage: number;
+        avgThroughput: number;
+        bestPerformance: PerformanceProfile | null;
+        worstPerformance: PerformanceProfile | null;
+        scalabilityAnalysis: any;
+    } {
+        const profiles = this.performanceProfiles.filter(p => p.approach === approach);
         
-        if (recentResults.length < this.config.minSampleSize) {
-            return false;
+        if (profiles.length === 0) {
+            return {
+                totalProfiles: 0,
+                avgExecutionTime: 0,
+                avgMemoryUsage: 0,
+                avgThroughput: 0,
+                bestPerformance: null,
+                worstPerformance: null,
+                scalabilityAnalysis: null
+            };
         }
 
-        // Calculate confidence interval for efficiency
-        const efficiencies = recentResults.map(r => r.overallEfficiency);
-        const mean = efficiencies.reduce((sum, eff) => sum + eff, 0) / efficiencies.length;
-        const stdDev = Math.sqrt(
-            efficiencies.reduce((sum, eff) => sum + Math.pow(eff - mean, 2), 0) / efficiencies.length
+        const avgExecutionTime = this.average(profiles.map(p => p.metrics.timing.total));
+        const avgMemoryUsage = this.average(profiles.map(p => p.metrics.resources.peakMemoryMB));
+        const avgThroughput = this.average(profiles.map(p => p.metrics.testsPerSecond));
+
+        // Find best and worst performing profiles
+        const bestPerformance = profiles.reduce((best, current) => 
+            current.metrics.timing.total < best.metrics.timing.total ? current : best
+        );
+        
+        const worstPerformance = profiles.reduce((worst, current) => 
+            current.metrics.timing.total > worst.metrics.timing.total ? current : worst
         );
 
-        // Simple significance test: current result within 2 standard deviations
-        const zScore = Math.abs(result.overallEfficiency - mean) / stdDev;
-        return zScore < 2; // 95% confidence level approximation
-    }
-
-    /**
-     * Calculate scalability metrics
-     */
-    public calculateScalabilityMetrics(
-        testSuiteSizes: number[],
-        correspondingResults: EfficiencyMetricsResult[]
-    ): ScalabilityMetrics[] {
-        const scalabilityMetrics: ScalabilityMetrics[] = [];
-
-        for (let i = 0; i < testSuiteSizes.length; i++) {
-            const size = testSuiteSizes[i];
-            const result = correspondingResults[i];
-            
-            if (!result) continue;
-
-            // Calculate growth rates (simplified linear approximation)
-            const analysisTimeGrowth = i > 0 ? 
-                (result.execution.analysisTime - correspondingResults[i-1].execution.analysisTime) / 
-                (size - testSuiteSizes[i-1]) : 0;
-            
-            const memoryGrowth = i > 0 ? 
-                (result.overhead.memoryOverhead - correspondingResults[i-1].overhead.memoryOverhead) / 
-                (size - testSuiteSizes[i-1]) : 0;
-
-            // Scaling factor: how efficiency changes with size
-            const baselineEfficiency = correspondingResults[0]?.overallEfficiency || 0.5;
-            const scalingFactor = baselineEfficiency > 0 ? result.overallEfficiency / baselineEfficiency : 1;
-
-            scalabilityMetrics.push({
-                testSuiteSize: size,
-                analysisTimeGrowth,
-                memoryGrowth,
-                efficiencyAtScale: result.overallEfficiency,
-                scalingFactor
-            });
-        }
-
-        return scalabilityMetrics;
-    }
-
-    /**
-     * Generate efficiency summary statistics
-     */
-    public generateEfficiencySummary(): {
-        totalSessions: number;
-        averageEfficiency: number;
-        bestEfficiency: number;
-        worstEfficiency: number;
-        improvementTrend: string;
-        recommendedActions: string[];
-    } {
-        if (this.results.length === 0) {
-            return {
-                totalSessions: 0,
-                averageEfficiency: 0,
-                bestEfficiency: 0,
-                worstEfficiency: 0,
-                improvementTrend: 'no-data',
-                recommendedActions: ['Collect more data to analyze efficiency trends']
-            };
-        }
-
-        const efficiencies = this.results.map(r => r.overallEfficiency);
-        const averageEfficiency = efficiencies.reduce((sum, eff) => sum + eff, 0) / efficiencies.length;
-        const bestEfficiency = Math.max(...efficiencies);
-        const worstEfficiency = Math.min(...efficiencies);
-
-        const trends = this.calculateEfficiencyTrends();
-        const recommendedActions = this.generateRecommendations(trends);
+        const scalabilityAnalysis = this.analyzeScalability(approach);
 
         return {
-            totalSessions: this.results.length,
-            averageEfficiency,
-            bestEfficiency,
-            worstEfficiency,
-            improvementTrend: trends.efficiencyTrend,
-            recommendedActions
+            totalProfiles: profiles.length,
+            avgExecutionTime,
+            avgMemoryUsage,
+            avgThroughput,
+            bestPerformance,
+            worstPerformance,
+            scalabilityAnalysis
         };
     }
 
     /**
-     * Generate efficiency improvement recommendations
+     * Extract timing data from experiment data
      */
-    private generateRecommendations(trends: EfficiencyTrends): string[] {
-        const recommendations: string[] = [];
-
-        if (trends.averageEfficiency < 0.6) {
-            recommendations.push('Overall efficiency is below 60% - consider tuning selection thresholds');
-        }
-
-        if (trends.efficiencyTrend === 'declining') {
-            recommendations.push('Efficiency is declining - review recent configuration changes');
-        }
-
-        if (trends.stabilityScore < 0.7) {
-            recommendations.push('Efficiency is unstable - consider stabilizing selection parameters');
-        }
-
-        const recentSession = trends.sessions[trends.sessions.length - 1];
-        if (recentSession) {
-            if (recentSession.overhead.analysisOverhead > 0.2) {
-                recommendations.push('Analysis overhead is high - optimize graph construction and analysis');
-            }
-
-            if (recentSession.reduction.reductionRatio < 0.3) {
-                recommendations.push('Test reduction is low - consider stricter selection criteria');
-            }
-
-            if (recentSession.savings.efficiencyRatio < 0) {
-                recommendations.push('Net savings are negative - analysis cost exceeds benefits');
-            }
-        }
-
-        if (recommendations.length === 0) {
-            recommendations.push('Efficiency metrics look good - continue current approach');
-        }
-
-        return recommendations;
-    }
-
-    /**
-     * Export efficiency data for external analysis
-     */
-    public exportEfficiencyData(): {
-        config: EfficiencyConfig;
-        results: EfficiencyMetricsResult[];
-        summary: any;
-        trends: EfficiencyTrends;
-        exportTimestamp: string;
-    } {
-        return {
-            config: this.config,
-            results: this.results,
-            summary: this.generateEfficiencySummary(),
-            trends: this.calculateEfficiencyTrends(),
-            exportTimestamp: new Date().toISOString()
-        };
-    }
-
-    /**
-     * Reset all efficiency data
-     */
-    public reset(): void {
-        this.results = [];
-        this.baselineResults.clear();
-        Logger.info('Efficiency metrics reset');
-    }
-
-    /**
-     * Get recent efficiency results
-     */
-    public getRecentResults(limit: number = 10): EfficiencyMetricsResult[] {
-        return this.results.slice(-limit);
-    }
-
-    /**
-     * Add baseline results for comparison
-     */
-    public addBaselineResults(approach: string, results: EfficiencyMetricsResult[]): void {
-        this.baselineResults.set(approach, results);
-        Logger.info(`Added ${results.length} baseline results for approach: ${approach}`);
-    }
-
-    /**
-     * Compare SIKG efficiency against baselines
-     */
-    public compareAgainstBaselines(): EfficiencyComparison[] {
-        const allResults: EfficiencyMetricsResult[] = [...this.results];
+    private extractTimingFromData(data: ExperimentData): TimingBreakdown {
+        // Use provided timing or estimate based on execution time
+        const total = data.executionTime;
         
-        // Add baseline results
-        for (const [approach, results] of this.baselineResults) {
-            allResults.push(...results);
-        }
+        // Estimate breakdown (these would be measured in real implementation)
+        return {
+            kgConstruction: total * 0.3,      // 30% for KG construction
+            semanticAnalysis: total * 0.2,    // 20% for semantic analysis
+            impactPropagation: total * 0.25,  // 25% for impact propagation
+            testSelection: total * 0.15,      // 15% for test selection
+            rlAdaptation: total * 0.1,        // 10% for RL adaptation
+            total: total
+        };
+    }
 
-        return this.compareEfficiency(allResults);
+    /**
+     * Estimate resource usage from experiment data
+     */
+    private estimateResourceUsage(data: ExperimentData): ResourceUsage {
+        // Estimate based on project characteristics
+        const baseMemory = 50; // 50MB base
+        const memoryPerTest = 0.1; // 0.1MB per test
+        const memoryPerFile = 2; // 2MB per file
+        
+        const estimatedMemory = baseMemory + 
+            (data.totalTests * memoryPerTest) + 
+            ((data.changedFiles?.length || 1) * memoryPerFile);
+
+        return {
+            peakMemoryMB: estimatedMemory,
+            avgMemoryMB: estimatedMemory * 0.8,
+            cpuUtilization: Math.min(100, 20 + (data.totalTests / 10)), // Estimate CPU usage
+            diskIOKB: (data.changedFiles?.length || 1) * 100, // Estimate disk I/O
+            graphSizeKB: data.totalTests * 2 // Estimate graph size
+        };
+    }
+
+    /**
+     * Calculate test execution savings
+     */
+    private calculateTestExecutionSavings(data: ExperimentData): number {
+        const avgTestTime = data.avgTestTime || 1000; // Default 1 second per test
+        const testsSkipped = data.totalTests - data.selectedTests;
+        return testsSkipped * avgTestTime;
+    }
+
+    /**
+     * Calculate early fault detection time
+     */
+    private calculateEarlyFaultDetectionTime(data: ExperimentData): number {
+        if (data.faultsDetected === 0) {
+            return 0;
+        }
+        
+        // Assume faults are detected in the first 30% of selected tests on average
+        const avgTestTime = data.avgTestTime || 1000;
+        const testsToFirstFault = Math.ceil(data.selectedTests * 0.3);
+        return testsToFirstFault * avgTestTime;
+    }
+
+    /**
+     * Estimate nodes processed during analysis
+     */
+    private estimateNodesProcessed(data: ExperimentData): number {
+        // Estimate based on project size and test count
+        const nodesPerTest = 5; // Assume 5 nodes per test on average
+        const nodesPerFile = 20; // Assume 20 nodes per changed file
+        
+        return (data.totalTests * nodesPerTest) + 
+               ((data.changedFiles?.length || 1) * nodesPerFile);
+    }
+
+    /**
+     * Analyze time complexity based on data patterns
+     */
+    private analyzeTimeComplexity(data: ExperimentData): string {
+        // Simplified complexity analysis based on input size
+        const inputSize = data.totalTests + (data.changedFiles?.length || 1);
+        const executionTime = data.executionTime;
+        
+        // Very rough heuristic
+        const timePerInput = executionTime / inputSize;
+        
+        if (timePerInput < 1) return 'O(1)';
+        if (timePerInput < 10) return 'O(log n)';
+        if (timePerInput < 100) return 'O(n)';
+        if (timePerInput < 1000) return 'O(n log n)';
+        return 'O(n²)';
+    }
+
+    /**
+     * Analyze memory complexity
+     */
+    private analyzeMemoryComplexity(resources: ResourceUsage): string {
+        // Simplified memory complexity analysis
+        if (resources.peakMemoryMB < 100) return 'O(1)';
+        if (resources.peakMemoryMB < 500) return 'O(n)';
+        if (resources.peakMemoryMB < 2000) return 'O(n log n)';
+        return 'O(n²)';
+    }
+
+    /**
+     * Calculate scaling factor based on project characteristics
+     */
+    private calculateScalingFactor(data: ExperimentData): number {
+        // How much slower per additional 1000 tests
+        const basePerformance = 100; // ms for 100 tests
+        const currentPerformance = data.executionTime;
+        const testRatio = data.totalTests / 100;
+        
+        return currentPerformance / (basePerformance * testRatio);
+    }
+
+    /**
+     * Calculate percentage improvement
+     */
+    private calculatePercentageImprovement(baseline: number, improved: number): number {
+        if (baseline === 0) return 0;
+        return ((baseline - improved) / baseline) * 100;
+    }
+
+    /**
+     * Assess significance of improvements
+     */
+    private assessSignificance(timeReduction: number, memoryReduction: number, throughputIncrease: number): 'high' | 'medium' | 'low' | 'none' {
+        const significantChanges = [timeReduction, memoryReduction, throughputIncrease].filter(change => Math.abs(change) > 10).length;
+        
+        if (significantChanges >= 3) return 'high';
+        if (significantChanges >= 2) return 'medium';
+        if (significantChanges >= 1) return 'low';
+        return 'none';
+    }
+
+    /**
+     * Check if approach is a baseline approach
+     */
+    private isBaselineApproach(approach: string): boolean {
+        const baselineApproaches = ['Random', 'Ekstazi-RTS', 'History-TCP'];
+        return baselineApproaches.includes(approach);
+    }
+
+    /**
+     * Find optimal project size for performance
+     */
+    private findOptimalProjectSize(profiles: PerformanceProfile[]): number | undefined {
+        if (profiles.length < 3) return undefined;
+        
+        // Find the size with the best cost-benefit ratio
+        let bestRatio = 0;
+        let optimalSize = undefined;
+        
+        for (const profile of profiles) {
+            const ratio = profile.metrics.costBenefitRatio;
+            if (ratio > bestRatio) {
+                bestRatio = ratio;
+                optimalSize = profile.projectSize;
+            }
+        }
+        
+        return optimalSize;
+    }
+
+    /**
+     * Calculate average of numbers
+     */
+    private average(numbers: number[]): number {
+        if (numbers.length === 0) return 0;
+        return numbers.reduce((sum, num) => sum + num, 0) / numbers.length;
+    }
+
+    /**
+     * Initialize baseline data structures
+     */
+    private initializeBaselines(): void {
+        const baselineApproaches = ['Random', 'Ekstazi-RTS', 'History-TCP'];
+        for (const approach of baselineApproaches) {
+            this.baselineProfiles.set(approach, []);
+        }
+    }
+
+    /**
+     * Clear all recorded data
+     */
+    public clear(): void {
+        this.performanceProfiles = [];
+        this.baselineProfiles.clear();
+        this.initializeBaselines();
+        Logger.debug('Efficiency metrics data cleared');
+    }
+
+    /**
+     * Export efficiency data for analysis
+     */
+    public exportData(): string {
+        const exportData = {
+            profiles: this.performanceProfiles,
+            baselines: Array.from(this.baselineProfiles.entries()),
+            summary: {
+                totalProfiles: this.performanceProfiles.length,
+                approaches: [...new Set(this.performanceProfiles.map(p => p.approach))],
+                exportTime: new Date().toISOString()
+            }
+        };
+        
+        return JSON.stringify(exportData, null, 2);
     }
 }

@@ -1,819 +1,727 @@
-// EffectivenessMetrics.ts - Test selection effectiveness calculation for SIKG experiments
+// EffectivenessMetrics.ts - Test selection effectiveness calculation and analysis
 
+import { ExperimentData, SyntheticFault } from '../data/DataCollector';
+import { ChangeType } from '../config/ExperimentConfig';
 import { Logger } from '../../utils/Logger';
-import { APFDCalculator, APFDResult } from '../../sikg/evaluation/APFDCalculator';
 
-/**
- * Test execution result for effectiveness calculation
- */
-export interface TestExecutionResult {
-    testId: string;
-    selected: boolean;
-    executed: boolean;
-    status: 'passed' | 'failed' | 'skipped' | 'error';
-    executionTime: number;
-    technique: string;
-    iteration: number;
-    commit: string;
-    faultDetected: boolean;
-    predictedImpact?: number;
-    actualImpact?: number;
-}
-
-/**
- * Fault information for effectiveness analysis
- */
-export interface FaultInfo {
-    faultId: string;
-    commit: string;
-    affectedFiles: string[];
-    detectedByTests: string[];
-    severity: 'low' | 'medium' | 'high' | 'critical';
-    faultType: 'logic' | 'integration' | 'performance' | 'security' | 'other';
-}
-
-/**
- * Effectiveness metrics for a single technique
- */
-export interface TechniqueEffectiveness {
-    technique: string;
-    iteration: number;
-    commit: string;
+export interface EffectivenessMetrics {
+    precision: number;
+    recall: number;
+    f1Score: number;
+    accuracy: number;
+    specificity: number;
+    mcc: number; // Matthews Correlation Coefficient
     
-    // Primary effectiveness metrics
-    precision: number;              // TP / (TP + FP)
-    recall: number;                 // TP / (TP + FN)
-    f1Score: number;               // 2 * (precision * recall) / (precision + recall)
-    specificity: number;           // TN / (TN + FP)
-    accuracy: number;              // (TP + TN) / (TP + TN + FP + FN)
+    // Test selection specific metrics
+    faultDetectionRate: number;
+    reductionRatio: number;
+    selectionAccuracy: number;
     
-    // Test selection metrics
-    totalTests: number;
-    selectedTests: number;
-    executedTests: number;
-    selectionRatio: number;        // selectedTests / totalTests
-    
-    // Fault detection metrics
-    faultsDetected: number;
-    totalFaults: number;
-    faultDetectionRate: number;    // faultsDetected / totalFaults
-    
-    // APFD metrics
+    // APFD and prioritization metrics
     apfd: number;
-    apfdResult?: APFDResult;
+    avgFaultPosition: number;
+    earlyDetectionRate: number;
     
-    // Time and efficiency
+    // Efficiency metrics
+    avgExecutionTime: number;
     totalExecutionTime: number;
-    averageTestTime: number;
-    analysisTime: number;
+    timeToFirstFault: number;
     
-    // Confusion matrix values
+    // Confidence metrics
+    confidenceInterval: ConfidenceInterval;
+    sampleSize: number;
+}
+
+export interface ConfidenceInterval {
+    lower: number;
+    upper: number;
+    confidence: number; // e.g., 0.95 for 95%
+}
+
+export interface ConfusionMatrix {
     truePositives: number;
     falsePositives: number;
     trueNegatives: number;
     falseNegatives: number;
+    total: number;
+}
+
+export interface FaultDetectionAnalysis {
+    totalFaults: number;
+    detectedFaults: number;
+    missedFaults: number;
+    faultsByType: Record<string, number>;
+    detectionByType: Record<string, number>;
+    faultPositions: number[];
+    averageDetectionPosition: number;
+}
+
+export interface ComparisonResult {
+    approach1: string;
+    approach2: string;
+    metrics1: EffectivenessMetrics;
+    metrics2: EffectivenessMetrics;
     
-    // Additional metrics
-    matthewsCorrelationCoefficient: number;  // MCC
-    balancedAccuracy: number;               // (sensitivity + specificity) / 2
-    informedness: number;                   // sensitivity + specificity - 1
-    markedness: number;                     // precision + npv - 1
-}
-
-/**
- * Comparative effectiveness analysis
- */
-export interface ComparativeEffectiveness {
-    baseline: string;
-    sikg: string;
-    metric: string;
-    baselineValue: number;
-    sikgValue: number;
-    improvement: number;           // (sikg - baseline) / baseline
-    absoluteImprovement: number;   // sikg - baseline
-    statisticallySignificant: boolean;
+    // Statistical comparison
+    significantDifference: boolean;
     pValue: number;
-    effectSize: number;           // Cohen's d
-    confidenceInterval: [number, number];
+    effectSize: number;
+    
+    // Practical differences
+    f1Improvement: number;
+    apfdImprovement: number;
+    efficiencyImprovement: number;
+    
+    conclusion: string;
 }
 
-/**
- * Trend analysis for effectiveness over time
- */
-export interface EffectivenessTrend {
-    technique: string;
-    metric: string;
+export interface TrendAnalysis {
+    metric: keyof EffectivenessMetrics;
     trend: 'improving' | 'declining' | 'stable';
-    slope: number;                // Linear regression slope
-    rSquared: number;            // Goodness of fit
-    changeRate: number;          // Average change per iteration
-    volatility: number;          // Standard deviation of changes
-    significance: number;        // Trend significance (p-value)
+    changeRate: number; // Per iteration
+    confidence: number;
+    dataPoints: { iteration: number; value: number }[];
 }
 
 /**
- * Effectiveness analysis configuration
+ * Calculates and analyzes test selection effectiveness metrics
  */
-export interface EffectivenessConfig {
-    calculateAPFD: boolean;
-    includeTimeMetrics: boolean;
-    includeTrendAnalysis: boolean;
-    minimumIterations: number;
-    significanceLevel: number;    // For statistical tests (default: 0.05)
-    effectSizeThreshold: number;  // Minimum effect size to consider meaningful
-    trendWindow: number;         // Number of iterations for trend analysis
-}
+export class EffectivenessMetricsCalculator {
+    private confidenceLevel: number = 0.95;
 
-/**
- * Main effectiveness metrics calculator for SIKG experiments
- */
-export class EffectivenessMetrics {
-    private apfdCalculator: APFDCalculator;
-    private config: EffectivenessConfig;
+    constructor(confidenceLevel: number = 0.95) {
+        this.confidenceLevel = confidenceLevel;
+    }
 
-    constructor(config?: Partial<EffectivenessConfig>) {
-        this.apfdCalculator = new APFDCalculator();
-        this.config = {
-            calculateAPFD: true,
-            includeTimeMetrics: true,
-            includeTrendAnalysis: true,
-            minimumIterations: 3,
-            significanceLevel: 0.05,
-            effectSizeThreshold: 0.2,
-            trendWindow: 10,
-            ...config
+    /**
+     * Calculate comprehensive effectiveness metrics for an approach
+     */
+    public calculateEffectiveness(
+        experimentData: ExperimentData[],
+        approach: string
+    ): EffectivenessMetrics {
+        const approachData = experimentData.filter(d => d.approach === approach);
+        
+        if (approachData.length === 0) {
+            Logger.warn(`No data found for approach: ${approach}`);
+            return this.createEmptyMetrics();
+        }
+
+        // Calculate confusion matrix
+        const confusionMatrix = this.calculateConfusionMatrix(approachData);
+        
+        // Basic classification metrics
+        const precision = this.calculatePrecision(confusionMatrix);
+        const recall = this.calculateRecall(confusionMatrix);
+        const f1Score = this.calculateF1Score(precision, recall);
+        const accuracy = this.calculateAccuracy(confusionMatrix);
+        const specificity = this.calculateSpecificity(confusionMatrix);
+        const mcc = this.calculateMCC(confusionMatrix);
+
+        // Test selection specific metrics
+        const faultDetectionRate = this.calculateFaultDetectionRate(approachData);
+        const reductionRatio = this.calculateReductionRatio(approachData);
+        const selectionAccuracy = this.calculateSelectionAccuracy(approachData);
+
+        // APFD and prioritization metrics
+        const apfdMetrics = this.calculateAPFDMetrics(approachData);
+
+        // Efficiency metrics
+        const efficiencyMetrics = this.calculateEfficiencyMetrics(approachData);
+
+        // Confidence interval for F1-score
+        const confidenceInterval = this.calculateConfidenceInterval(
+            approachData.map(d => d.f1Score),
+            this.confidenceLevel
+        );
+
+        return {
+            precision,
+            recall,
+            f1Score,
+            accuracy,
+            specificity,
+            mcc,
+            faultDetectionRate,
+            reductionRatio,
+            selectionAccuracy,
+            apfd: apfdMetrics.apfd,
+            avgFaultPosition: apfdMetrics.avgFaultPosition,
+            earlyDetectionRate: apfdMetrics.earlyDetectionRate,
+            avgExecutionTime: efficiencyMetrics.avgExecutionTime,
+            totalExecutionTime: efficiencyMetrics.totalExecutionTime,
+            timeToFirstFault: efficiencyMetrics.timeToFirstFault,
+            confidenceInterval,
+            sampleSize: approachData.length
         };
     }
 
     /**
-     * Calculate effectiveness metrics for a single technique iteration
+     * Calculate confusion matrix from experiment data
      */
-    public calculateTechniqueEffectiveness(
-        results: TestExecutionResult[],
-        faults: FaultInfo[],
-        technique: string,
-        iteration: number,
-        commit: string
-    ): TechniqueEffectiveness {
-        Logger.debug(`Calculating effectiveness for ${technique} iteration ${iteration}`);
+    private calculateConfusionMatrix(data: ExperimentData[]): ConfusionMatrix {
+        let truePositives = 0;   // Selected tests that found faults
+        let falsePositives = 0;  // Selected tests that didn't find faults
+        let trueNegatives = 0;   // Non-selected tests that wouldn't find faults
+        let falseNegatives = 0;  // Non-selected tests that would find faults
 
-        try {
-            // Filter results for this technique
-            const techniqueResults = results.filter(r => r.technique === technique);
+        for (const experiment of data) {
+            const selectedTests = experiment.selectedTests;
+            const totalTests = experiment.totalTests;
+            const faultsDetected = experiment.faultsDetected;
+            const faultsInjected = experiment.faultsInjected;
+
+            // Estimate true positives and false positives
+            if (selectedTests > 0) {
+                const detectionRate = faultsDetected / Math.max(1, faultsInjected);
+                const estimatedTP = Math.round(selectedTests * detectionRate);
+                const estimatedFP = selectedTests - estimatedTP;
+                
+                truePositives += estimatedTP;
+                falsePositives += estimatedFP;
+            }
+
+            // Estimate true negatives and false negatives
+            const nonSelectedTests = totalTests - selectedTests;
+            const missedFaults = faultsInjected - faultsDetected;
             
-            if (techniqueResults.length === 0) {
-                throw new Error(`No results found for technique: ${technique}`);
-            }
-
-            // Calculate basic metrics
-            const totalTests = techniqueResults.length;
-            const selectedTests = techniqueResults.filter(r => r.selected).length;
-            const executedTests = techniqueResults.filter(r => r.executed).length;
-            const selectionRatio = totalTests > 0 ? selectedTests / totalTests : 0;
-
-            // Calculate confusion matrix
-            const confusionMatrix = this.calculateConfusionMatrix(techniqueResults, faults);
-            const { truePositives, falsePositives, trueNegatives, falseNegatives } = confusionMatrix;
-
-            // Calculate primary effectiveness metrics
-            const precision = this.calculatePrecision(truePositives, falsePositives);
-            const recall = this.calculateRecall(truePositives, falseNegatives);
-            const f1Score = this.calculateF1Score(precision, recall);
-            const specificity = this.calculateSpecificity(trueNegatives, falsePositives);
-            const accuracy = this.calculateAccuracy(truePositives, trueNegatives, falsePositives, falseNegatives);
-
-            // Calculate fault detection metrics
-            const faultMetrics = this.calculateFaultDetectionMetrics(techniqueResults, faults);
-
-            // Calculate APFD if enabled
-            let apfd = 0;
-            let apfdResult: APFDResult | undefined;
-            if (this.config.calculateAPFD) {
-                const testExecutions = techniqueResults.map(r => ({
-                    testId: r.testId,
-                    status: r.status,
-                    executionTime: r.executionTime,
-                    timestamp: new Date(),
-                    predictedImpact: r.predictedImpact || 0,
-                    wasFaultDetected: r.faultDetected
-                }));
-                
-                apfdResult = this.apfdCalculator.calculateAPFD(testExecutions);
-                apfd = apfdResult.apfd;
-            }
-
-            // Calculate time metrics
-            const timeMetrics = this.calculateTimeMetrics(techniqueResults);
-
-            // Calculate advanced metrics
-            const mcc = this.calculateMatthewsCorrelationCoefficient(
-                truePositives, trueNegatives, falsePositives, falseNegatives
-            );
-            const balancedAccuracy = (recall + specificity) / 2;
-            const informedness = recall + specificity - 1;
-            const npv = this.calculateNegativePredictiveValue(trueNegatives, falseNegatives);
-            const markedness = precision + npv - 1;
-
-            const effectiveness: TechniqueEffectiveness = {
-                technique,
-                iteration,
-                commit,
-                
-                // Primary metrics
-                precision,
-                recall,
-                f1Score,
-                specificity,
-                accuracy,
-                
-                // Test selection metrics
-                totalTests,
-                selectedTests,
-                executedTests,
-                selectionRatio,
-                
-                // Fault detection metrics
-                faultsDetected: faultMetrics.faultsDetected,
-                totalFaults: faultMetrics.totalFaults,
-                faultDetectionRate: faultMetrics.faultDetectionRate,
-                
-                // APFD metrics
-                apfd,
-                apfdResult,
-                
-                // Time metrics
-                totalExecutionTime: timeMetrics.totalExecutionTime,
-                averageTestTime: timeMetrics.averageTestTime,
-                analysisTime: timeMetrics.analysisTime,
-                
-                // Confusion matrix
-                truePositives,
-                falsePositives,
-                trueNegatives,
-                falseNegatives,
-                
-                // Advanced metrics
-                matthewsCorrelationCoefficient: mcc,
-                balancedAccuracy,
-                informedness,
-                markedness
-            };
-
-            Logger.debug(`Effectiveness calculated: F1=${f1Score.toFixed(3)}, APFD=${apfd.toFixed(3)}, FDR=${faultMetrics.faultDetectionRate.toFixed(3)}`);
-            return effectiveness;
-
-        } catch (error) {
-            Logger.error(`Error calculating effectiveness for ${technique}:`, error);
-            throw error;
+            // Assume some missed faults would be found by non-selected tests
+            const estimatedFN = Math.min(missedFaults, Math.round(nonSelectedTests * 0.1));
+            const estimatedTN = nonSelectedTests - estimatedFN;
+            
+            trueNegatives += estimatedTN;
+            falseNegatives += estimatedFN;
         }
+
+        return {
+            truePositives,
+            falsePositives,
+            trueNegatives,
+            falseNegatives,
+            total: truePositives + falsePositives + trueNegatives + falseNegatives
+        };
     }
 
     /**
-     * Calculate comparative effectiveness between techniques
+     * Calculate precision: TP / (TP + FP)
      */
-    public calculateComparativeEffectiveness(
-        baselineResults: TechniqueEffectiveness[],
-        sikgResults: TechniqueEffectiveness[],
-        baseline: string = 'baseline',
-        sikg: string = 'SIKG'
-    ): ComparativeEffectiveness[] {
-        Logger.info(`Calculating comparative effectiveness: ${baseline} vs ${sikg}`);
+    private calculatePrecision(cm: ConfusionMatrix): number {
+        const denominator = cm.truePositives + cm.falsePositives;
+        return denominator > 0 ? cm.truePositives / denominator : 0;
+    }
 
-        const comparisons: ComparativeEffectiveness[] = [];
-        const metrics = ['precision', 'recall', 'f1Score', 'apfd', 'faultDetectionRate', 'accuracy'];
+    /**
+     * Calculate recall (sensitivity): TP / (TP + FN)
+     */
+    private calculateRecall(cm: ConfusionMatrix): number {
+        const denominator = cm.truePositives + cm.falseNegatives;
+        return denominator > 0 ? cm.truePositives / denominator : 0;
+    }
 
-        for (const metric of metrics) {
-            try {
-                const baselineValues = baselineResults.map(r => (r as any)[metric]).filter(v => v !== undefined);
-                const sikgValues = sikgResults.map(r => (r as any)[metric]).filter(v => v !== undefined);
+    /**
+     * Calculate F1-score: 2 * (precision * recall) / (precision + recall)
+     */
+    private calculateF1Score(precision: number, recall: number): number {
+        const sum = precision + recall;
+        return sum > 0 ? (2 * precision * recall) / sum : 0;
+    }
 
-                if (baselineValues.length === 0 || sikgValues.length === 0) {
-                    Logger.warn(`Insufficient data for metric ${metric}`);
-                    continue;
+    /**
+     * Calculate accuracy: (TP + TN) / (TP + FP + TN + FN)
+     */
+    private calculateAccuracy(cm: ConfusionMatrix): number {
+        return cm.total > 0 ? (cm.truePositives + cm.trueNegatives) / cm.total : 0;
+    }
+
+    /**
+     * Calculate specificity: TN / (TN + FP)
+     */
+    private calculateSpecificity(cm: ConfusionMatrix): number {
+        const denominator = cm.trueNegatives + cm.falsePositives;
+        return denominator > 0 ? cm.trueNegatives / denominator : 0;
+    }
+
+    /**
+     * Calculate Matthews Correlation Coefficient
+     */
+    private calculateMCC(cm: ConfusionMatrix): number {
+        const { truePositives: tp, falsePositives: fp, trueNegatives: tn, falseNegatives: fn } = cm;
+        
+        const numerator = (tp * tn) - (fp * fn);
+        const denominator = Math.sqrt((tp + fp) * (tp + fn) * (tn + fp) * (tn + fn));
+        
+        return denominator > 0 ? numerator / denominator : 0;
+    }
+
+    /**
+     * Calculate fault detection rate: detected faults / total faults
+     */
+    private calculateFaultDetectionRate(data: ExperimentData[]): number {
+        const totalFaultsDetected = data.reduce((sum, d) => sum + d.faultsDetected, 0);
+        const totalFaultsInjected = data.reduce((sum, d) => sum + d.faultsInjected, 0);
+        
+        return totalFaultsInjected > 0 ? totalFaultsDetected / totalFaultsInjected : 0;
+    }
+
+    /**
+     * Calculate test suite reduction ratio: 1 - (selected / total)
+     */
+    private calculateReductionRatio(data: ExperimentData[]): number {
+        const avgSelected = data.reduce((sum, d) => sum + d.selectedTests, 0) / data.length;
+        const avgTotal = data.reduce((sum, d) => sum + d.totalTests, 0) / data.length;
+        
+        return avgTotal > 0 ? 1 - (avgSelected / avgTotal) : 0;
+    }
+
+    /**
+     * Calculate selection accuracy: correct selections / total selections
+     */
+    private calculateSelectionAccuracy(data: ExperimentData[]): number {
+        let correctSelections = 0;
+        let totalSelections = 0;
+
+        for (const experiment of data) {
+            // Estimate correct selections based on fault detection
+            const selectionEffectiveness = experiment.faultsInjected > 0 ? 
+                experiment.faultsDetected / experiment.faultsInjected : 0.5;
+            
+            correctSelections += experiment.selectedTests * selectionEffectiveness;
+            totalSelections += experiment.selectedTests;
+        }
+
+        return totalSelections > 0 ? correctSelections / totalSelections : 0;
+    }
+
+    /**
+     * Calculate APFD and related prioritization metrics
+     */
+    private calculateAPFDMetrics(data: ExperimentData[]): {
+        apfd: number;
+        avgFaultPosition: number;
+        earlyDetectionRate: number;
+    } {
+        let totalAPFD = 0;
+        let totalFaultPositions = 0;
+        let totalFaults = 0;
+        let earlyFaults = 0;
+
+        for (const experiment of data) {
+            const selectedTests = experiment.selectedTests;
+            const faultsDetected = experiment.faultsDetected;
+            
+            if (selectedTests > 0 && faultsDetected > 0) {
+                // Simulate fault positions (assume evenly distributed for simplicity)
+                const faultPositions: number[] = [];
+                for (let i = 0; i < faultsDetected; i++) {
+                    const position = Math.floor((i + 1) * selectedTests / faultsDetected);
+                    faultPositions.push(position);
                 }
 
-                const baselineValue = this.calculateMean(baselineValues);
-                const sikgValue = this.calculateMean(sikgValues);
-                const improvement = baselineValue > 0 ? (sikgValue - baselineValue) / baselineValue : 0;
-                const absoluteImprovement = sikgValue - baselineValue;
+                // Calculate APFD for this experiment
+                const sumOfPositions = faultPositions.reduce((sum, pos) => sum + pos, 0);
+                const apfd = 1 - (sumOfPositions / (selectedTests * faultsDetected)) + (1 / (2 * selectedTests));
+                
+                totalAPFD += apfd;
+                totalFaultPositions += sumOfPositions;
+                totalFaults += faultsDetected;
 
-                // Statistical significance testing
-                const { pValue, effectSize } = this.performTTest(baselineValues, sikgValues);
-                const statisticallySignificant = pValue < this.config.significanceLevel;
-                const confidenceInterval = this.calculateConfidenceInterval(sikgValues, 0.95);
-
-                comparisons.push({
-                    baseline,
-                    sikg,
-                    metric,
-                    baselineValue,
-                    sikgValue,
-                    improvement,
-                    absoluteImprovement,
-                    statisticallySignificant,
-                    pValue,
-                    effectSize,
-                    confidenceInterval
-                });
-
-                Logger.debug(`${metric}: ${baseline}=${baselineValue.toFixed(3)}, ${sikg}=${sikgValue.toFixed(3)}, improvement=${(improvement*100).toFixed(1)}%`);
-
-            } catch (error) {
-                Logger.error(`Error calculating comparison for metric ${metric}:`, error);
+                // Count early faults (in first 50% of tests)
+                const earlyFaultCount = faultPositions.filter(pos => pos <= selectedTests / 2).length;
+                earlyFaults += earlyFaultCount;
             }
         }
 
-        return comparisons;
+        const avgAPFD = data.length > 0 ? totalAPFD / data.length : 0;
+        const avgFaultPosition = totalFaults > 0 ? totalFaultPositions / totalFaults : 0;
+        const earlyDetectionRate = totalFaults > 0 ? earlyFaults / totalFaults : 0;
+
+        return {
+            apfd: avgAPFD,
+            avgFaultPosition,
+            earlyDetectionRate
+        };
     }
 
     /**
-     * Analyze effectiveness trends over iterations
+     * Calculate efficiency metrics
+     */
+    private calculateEfficiencyMetrics(data: ExperimentData[]): {
+        avgExecutionTime: number;
+        totalExecutionTime: number;
+        timeToFirstFault: number;
+    } {
+        const avgExecutionTime = data.reduce((sum, d) => sum + d.avgTestTime, 0) / data.length;
+        const totalExecutionTime = data.reduce((sum, d) => sum + d.executionTime, 0);
+        
+        // Estimate time to first fault (assuming faults are detected early)
+        const timeToFirstFault = data.filter(d => d.faultsDetected > 0)
+            .reduce((sum, d) => sum + (d.avgTestTime * 0.3), 0) / data.length; // Assume first fault found at 30% of execution
+
+        return {
+            avgExecutionTime,
+            totalExecutionTime,
+            timeToFirstFault
+        };
+    }
+
+    /**
+     * Calculate confidence interval for a metric
+     */
+    private calculateConfidenceInterval(values: number[], confidence: number): ConfidenceInterval {
+        if (values.length === 0) {
+            return { lower: 0, upper: 0, confidence };
+        }
+
+        const mean = values.reduce((sum, val) => sum + val, 0) / values.length;
+        const variance = values.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / (values.length - 1);
+        const standardError = Math.sqrt(variance / values.length);
+
+        // Use t-distribution for small samples, normal for large samples
+        const tValue = values.length < 30 ? this.getTValue(values.length - 1, confidence) : this.getZValue(confidence);
+        const margin = tValue * standardError;
+
+        return {
+            lower: Math.max(0, mean - margin),
+            upper: Math.min(1, mean + margin),
+            confidence
+        };
+    }
+
+    /**
+     * Compare effectiveness between two approaches
+     */
+    public compareApproaches(
+        data: ExperimentData[],
+        approach1: string,
+        approach2: string
+    ): ComparisonResult {
+        const metrics1 = this.calculateEffectiveness(data, approach1);
+        const metrics2 = this.calculateEffectiveness(data, approach2);
+
+        // Statistical significance test (simplified t-test)
+        const data1 = data.filter(d => d.approach === approach1).map(d => d.f1Score);
+        const data2 = data.filter(d => d.approach === approach2).map(d => d.f1Score);
+        const { significantDifference, pValue } = this.performTTest(data1, data2);
+
+        // Effect size (Cohen's d)
+        const effectSize = this.calculateCohenD(data1, data2);
+
+        // Practical differences
+        const f1Improvement = ((metrics1.f1Score - metrics2.f1Score) / metrics2.f1Score) * 100;
+        const apfdImprovement = ((metrics1.apfd - metrics2.apfd) / metrics2.apfd) * 100;
+        const efficiencyImprovement = ((metrics2.avgExecutionTime - metrics1.avgExecutionTime) / metrics2.avgExecutionTime) * 100;
+
+        // Generate conclusion
+        const conclusion = this.generateComparisonConclusion(
+            approach1, approach2, f1Improvement, significantDifference, effectSize
+        );
+
+        return {
+            approach1,
+            approach2,
+            metrics1,
+            metrics2,
+            significantDifference,
+            pValue,
+            effectSize,
+            f1Improvement,
+            apfdImprovement,
+            efficiencyImprovement,
+            conclusion
+        };
+    }
+
+    /**
+     * Analyze trends over iterations
      */
     public analyzeTrends(
-        effectivenessHistory: TechniqueEffectiveness[],
-        technique: string
-    ): EffectivenessTrend[] {
-        if (!this.config.includeTrendAnalysis || effectivenessHistory.length < this.config.minimumIterations) {
-            return [];
+        data: ExperimentData[],
+        approach: string,
+        metric: keyof EffectivenessMetrics
+    ): TrendAnalysis {
+        const approachData = data
+            .filter(d => d.approach === approach)
+            .sort((a, b) => a.iteration - b.iteration);
+
+        if (approachData.length < 3) {
+            return {
+                metric,
+                trend: 'stable',
+                changeRate: 0,
+                confidence: 0,
+                dataPoints: []
+            };
         }
 
-        Logger.debug(`Analyzing trends for ${technique} over ${effectivenessHistory.length} iterations`);
+        // Extract data points
+        const dataPoints = approachData.map(d => ({
+            iteration: d.iteration,
+            value: this.extractMetricValue(d, metric)
+        }));
 
-        const trends: EffectivenessTrend[] = [];
-        const metrics = ['precision', 'recall', 'f1Score', 'apfd', 'faultDetectionRate'];
+        // Simple linear regression to detect trend
+        const { slope, rSquared } = this.linearRegression(
+            dataPoints.map(p => p.iteration),
+            dataPoints.map(p => p.value)
+        );
 
-        for (const metric of metrics) {
-            try {
-                const values = effectivenessHistory.map(h => (h as any)[metric]).filter(v => v !== undefined);
+        // Determine trend direction
+        let trend: 'improving' | 'declining' | 'stable';
+        if (Math.abs(slope) < 0.001) {
+            trend = 'stable';
+        } else if (slope > 0) {
+            trend = 'improving';
+        } else {
+            trend = 'declining';
+        }
+
+        return {
+            metric,
+            trend,
+            changeRate: slope,
+            confidence: rSquared,
+            dataPoints
+        };
+    }
+
+    /**
+     * Analyze fault detection patterns
+     */
+    public analyzeFaultDetection(
+        data: ExperimentData[],
+        faultData?: SyntheticFault[]
+    ): FaultDetectionAnalysis {
+        const totalFaults = data.reduce((sum, d) => sum + d.faultsInjected, 0);
+        const detectedFaults = data.reduce((sum, d) => sum + d.faultsDetected, 0);
+        const missedFaults = totalFaults - detectedFaults;
+
+        // Analyze by fault type (if fault data available)
+        const faultsByType: Record<string, number> = {};
+        const detectionByType: Record<string, number> = {};
+
+        if (faultData) {
+            for (const fault of faultData) {
+                faultsByType[fault.type] = (faultsByType[fault.type] || 0) + 1;
                 
-                if (values.length < this.config.minimumIterations) {
-                    continue;
+                // Estimate detection based on detectability
+                if (Math.random() < fault.detectability) {
+                    detectionByType[fault.type] = (detectionByType[fault.type] || 0) + 1;
                 }
-
-                // Calculate linear regression
-                const regression = this.calculateLinearRegression(values);
-                
-                // Determine trend direction
-                let trend: 'improving' | 'declining' | 'stable' = 'stable';
-                if (regression.slope > 0.001) {
-                    trend = 'improving';
-                } else if (regression.slope < -0.001) {
-                    trend = 'declining';
-                }
-
-                // Calculate volatility
-                const volatility = this.calculateStandardDeviation(values);
-                
-                // Calculate change rate
-                const changeRate = values.length > 1 ? 
-                    (values[values.length - 1] - values[0]) / (values.length - 1) : 0;
-
-                trends.push({
-                    technique,
-                    metric,
-                    trend,
-                    slope: regression.slope,
-                    rSquared: regression.rSquared,
-                    changeRate,
-                    volatility,
-                    significance: regression.pValue
-                });
-
-            } catch (error) {
-                Logger.error(`Error analyzing trend for metric ${metric}:`, error);
             }
         }
 
-        return trends;
+        // Simulate fault positions
+        const faultPositions: number[] = [];
+        for (const experiment of data) {
+            for (let i = 0; i < experiment.faultsDetected; i++) {
+                const position = Math.floor(Math.random() * experiment.selectedTests) + 1;
+                faultPositions.push(position);
+            }
+        }
+
+        const averageDetectionPosition = faultPositions.length > 0 ?
+            faultPositions.reduce((sum, pos) => sum + pos, 0) / faultPositions.length : 0;
+
+        return {
+            totalFaults,
+            detectedFaults,
+            missedFaults,
+            faultsByType,
+            detectionByType,
+            faultPositions,
+            averageDetectionPosition
+        };
     }
 
     /**
      * Generate effectiveness summary report
      */
     public generateEffectivenessSummary(
-        allResults: TechniqueEffectiveness[],
-        comparisons: ComparativeEffectiveness[],
-        trends: EffectivenessTrend[]
+        data: ExperimentData[],
+        approaches: string[]
     ): {
-        summary: Record<string, any>;
+        overall: EffectivenessMetrics;
+        byApproach: Record<string, EffectivenessMetrics>;
+        rankings: { approach: string; f1Score: number; rank: number }[];
         recommendations: string[];
-        insights: string[];
     } {
-        const techniques = [...new Set(allResults.map(r => r.technique))];
-        const summary: Record<string, any> = {};
-        const recommendations: string[] = [];
-        const insights: string[] = [];
+        // Calculate overall metrics
+        const overall = this.calculateEffectiveness(data, ''); // All data
 
-        // Calculate averages by technique
-        for (const technique of techniques) {
-            const techniqueResults = allResults.filter(r => r.technique === technique);
-            summary[technique] = {
-                avgPrecision: this.calculateMean(techniqueResults.map(r => r.precision)),
-                avgRecall: this.calculateMean(techniqueResults.map(r => r.recall)),
-                avgF1Score: this.calculateMean(techniqueResults.map(r => r.f1Score)),
-                avgAPFD: this.calculateMean(techniqueResults.map(r => r.apfd)),
-                avgFaultDetectionRate: this.calculateMean(techniqueResults.map(r => r.faultDetectionRate)),
-                avgSelectionRatio: this.calculateMean(techniqueResults.map(r => r.selectionRatio)),
-                iterations: techniqueResults.length
-            };
+        // Calculate by approach
+        const byApproach: Record<string, EffectivenessMetrics> = {};
+        for (const approach of approaches) {
+            byApproach[approach] = this.calculateEffectiveness(data, approach);
         }
 
-        // Generate insights from comparisons
-        const significantImprovements = comparisons.filter(c => 
-            c.statisticallySignificant && c.improvement > this.config.effectSizeThreshold
-        );
+        // Create rankings
+        const rankings = approaches
+            .map(approach => ({
+                approach,
+                f1Score: byApproach[approach].f1Score,
+                rank: 0
+            }))
+            .sort((a, b) => b.f1Score - a.f1Score)
+            .map((item, index) => ({ ...item, rank: index + 1 }));
 
-        if (significantImprovements.length > 0) {
-            insights.push(`SIKG shows statistically significant improvements in ${significantImprovements.length} metrics`);
-            
-            const bestImprovement = significantImprovements.reduce((best, current) => 
-                current.improvement > best.improvement ? current : best
-            );
-            insights.push(`Best improvement: ${(bestImprovement.improvement * 100).toFixed(1)}% in ${bestImprovement.metric}`);
+        // Generate recommendations
+        const recommendations = this.generateRecommendations(byApproach, rankings);
+
+        return {
+            overall,
+            byApproach,
+            rankings,
+            recommendations
+        };
+    }
+
+    // Helper methods
+
+    private createEmptyMetrics(): EffectivenessMetrics {
+        return {
+            precision: 0, recall: 0, f1Score: 0, accuracy: 0, specificity: 0, mcc: 0,
+            faultDetectionRate: 0, reductionRatio: 0, selectionAccuracy: 0,
+            apfd: 0, avgFaultPosition: 0, earlyDetectionRate: 0,
+            avgExecutionTime: 0, totalExecutionTime: 0, timeToFirstFault: 0,
+            confidenceInterval: { lower: 0, upper: 0, confidence: 0.95 },
+            sampleSize: 0
+        };
+    }
+
+    private getTValue(df: number, confidence: number): number {
+        // Simplified t-value lookup (in practice, would use statistical library)
+        const alpha = 1 - confidence;
+        if (confidence === 0.95) return df >= 30 ? 1.96 : 2.045; // Approximation
+        if (confidence === 0.99) return df >= 30 ? 2.576 : 2.756;
+        return 1.96; // Default
+    }
+
+    private getZValue(confidence: number): number {
+        if (confidence === 0.95) return 1.96;
+        if (confidence === 0.99) return 2.576;
+        if (confidence === 0.90) return 1.645;
+        return 1.96; // Default
+    }
+
+    private performTTest(data1: number[], data2: number[]): { significantDifference: boolean; pValue: number } {
+        // Simplified t-test (in practice, would use proper statistical library)
+        if (data1.length < 2 || data2.length < 2) {
+            return { significantDifference: false, pValue: 1.0 };
         }
 
-        // Generate recommendations from trends
-        const improvingTrends = trends.filter(t => t.trend === 'improving' && t.significance < 0.05);
-        const decliningTrends = trends.filter(t => t.trend === 'declining' && t.significance < 0.05);
+        const mean1 = data1.reduce((sum, val) => sum + val, 0) / data1.length;
+        const mean2 = data2.reduce((sum, val) => sum + val, 0) / data2.length;
+        
+        const var1 = data1.reduce((sum, val) => sum + Math.pow(val - mean1, 2), 0) / (data1.length - 1);
+        const var2 = data2.reduce((sum, val) => sum + Math.pow(val - mean2, 2), 0) / (data2.length - 1);
+        
+        const pooledSE = Math.sqrt(var1 / data1.length + var2 / data2.length);
+        const tStat = Math.abs(mean1 - mean2) / pooledSE;
+        
+        // Simplified p-value calculation
+        const pValue = tStat > 1.96 ? 0.05 : 0.1; // Very simplified
+        const significantDifference = pValue < 0.05;
 
-        if (improvingTrends.length > 0) {
-            insights.push(`${improvingTrends.length} metrics show significant improvement trends`);
+        return { significantDifference, pValue };
+    }
+
+    private calculateCohenD(data1: number[], data2: number[]): number {
+        if (data1.length < 2 || data2.length < 2) return 0;
+
+        const mean1 = data1.reduce((sum, val) => sum + val, 0) / data1.length;
+        const mean2 = data2.reduce((sum, val) => sum + val, 0) / data2.length;
+        
+        const var1 = data1.reduce((sum, val) => sum + Math.pow(val - mean1, 2), 0) / (data1.length - 1);
+        const var2 = data2.reduce((sum, val) => sum + Math.pow(val - mean2, 2), 0) / (data2.length - 1);
+        
+        const pooledSD = Math.sqrt((var1 + var2) / 2);
+        
+        return pooledSD > 0 ? Math.abs(mean1 - mean2) / pooledSD : 0;
+    }
+
+    private generateComparisonConclusion(
+        approach1: string, approach2: string, improvement: number, 
+        significant: boolean, effectSize: number
+    ): string {
+        const absImprovement = Math.abs(improvement);
+        const better = improvement > 0 ? approach1 : approach2;
+        
+        let magnitude = 'small';
+        if (effectSize > 0.8) magnitude = 'large';
+        else if (effectSize > 0.5) magnitude = 'medium';
+        
+        return `${better} performs ${absImprovement.toFixed(1)}% better with ${magnitude} effect size. ` +
+               `Difference is ${significant ? 'statistically significant' : 'not statistically significant'}.`;
+    }
+
+    private extractMetricValue(data: ExperimentData, metric: keyof EffectivenessMetrics): number {
+        // Map experiment data fields to effectiveness metrics
+        switch (metric) {
+            case 'precision': return data.precision;
+            case 'recall': return data.recall;
+            case 'f1Score': return data.f1Score;
+            case 'apfd': return data.apfd;
+            case 'faultDetectionRate': return data.faultsDetected / Math.max(1, data.faultsInjected);
+            case 'reductionRatio': return data.reductionRatio;
+            case 'avgExecutionTime': return data.avgTestTime;
+            default: return 0;
         }
-
-        if (decliningTrends.length > 0) {
-            recommendations.push(`Monitor declining trends in: ${decliningTrends.map(t => t.metric).join(', ')}`);
-        }
-
-        // Performance-based recommendations
-        const sikgResults = allResults.filter(r => r.technique.toLowerCase().includes('sikg'));
-        if (sikgResults.length > 0) {
-            const avgF1 = this.calculateMean(sikgResults.map(r => r.f1Score));
-            if (avgF1 < 0.7) {
-                recommendations.push('Consider tuning SIKG parameters - F1 score below 0.7');
-            }
-            
-            const avgSelectionRatio = this.calculateMean(sikgResults.map(r => r.selectionRatio));
-            if (avgSelectionRatio > 0.8) {
-                recommendations.push('Consider more aggressive test selection - current selection ratio is high');
-            } else if (avgSelectionRatio < 0.2) {
-                recommendations.push('Consider less aggressive test selection - may miss important tests');
-            }
-        }
-
-        return { summary, recommendations, insights };
     }
 
-    /**
-     * Calculate confusion matrix for test selection effectiveness
-     */
-    private calculateConfusionMatrix(
-        results: TestExecutionResult[],
-        faults: FaultInfo[]
-    ): { truePositives: number; falsePositives: number; trueNegatives: number; falseNegatives: number } {
-        let truePositives = 0;   // Selected tests that detected faults
-        let falsePositives = 0;  // Selected tests that didn't detect faults
-        let trueNegatives = 0;   // Unselected tests that wouldn't detect faults
-        let falseNegatives = 0;  // Unselected tests that would detect faults
+    private linearRegression(x: number[], y: number[]): { slope: number; rSquared: number } {
+        const n = x.length;
+        if (n === 0) return { slope: 0, rSquared: 0 };
 
-        // Create fault detection mapping
-        const faultDetectingTests = new Set<string>();
-        faults.forEach(fault => {
-            fault.detectedByTests.forEach(testId => faultDetectingTests.add(testId));
-        });
+        const sumX = x.reduce((sum, val) => sum + val, 0);
+        const sumY = y.reduce((sum, val) => sum + val, 0);
+        const sumXY = x.reduce((sum, val, i) => sum + val * y[i], 0);
+        const sumXX = x.reduce((sum, val) => sum + val * val, 0);
+        const sumYY = y.reduce((sum, val) => sum + val * val, 0);
 
-        for (const result of results) {
-            const isSelected = result.selected;
-            const wouldDetectFault = faultDetectingTests.has(result.testId) || result.faultDetected;
-
-            if (isSelected && wouldDetectFault) {
-                truePositives++;
-            } else if (isSelected && !wouldDetectFault) {
-                falsePositives++;
-            } else if (!isSelected && !wouldDetectFault) {
-                trueNegatives++;
-            } else if (!isSelected && wouldDetectFault) {
-                falseNegatives++;
-            }
-        }
-
-        return { truePositives, falsePositives, trueNegatives, falseNegatives };
-    }
-
-    /**
-     * Calculate fault detection metrics
-     */
-    private calculateFaultDetectionMetrics(
-        results: TestExecutionResult[],
-        faults: FaultInfo[]
-    ): { faultsDetected: number; totalFaults: number; faultDetectionRate: number } {
-        const selectedTests = new Set(results.filter(r => r.selected).map(r => r.testId));
+        const slope = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX);
         
-        let faultsDetected = 0;
-        const totalFaults = faults.length;
-
-        for (const fault of faults) {
-            // Check if any selected test can detect this fault
-            const canDetect = fault.detectedByTests.some(testId => selectedTests.has(testId));
-            if (canDetect) {
-                faultsDetected++;
-            }
-        }
-
-        const faultDetectionRate = totalFaults > 0 ? faultsDetected / totalFaults : 0;
-        return { faultsDetected, totalFaults, faultDetectionRate };
-    }
-
-    /**
-     * Calculate time-related metrics
-     */
-    private calculateTimeMetrics(results: TestExecutionResult[]): {
-        totalExecutionTime: number;
-        averageTestTime: number;
-        analysisTime: number;
-    } {
-        const executedTests = results.filter(r => r.executed);
-        const totalExecutionTime = executedTests.reduce((sum, r) => sum + r.executionTime, 0);
-        const averageTestTime = executedTests.length > 0 ? totalExecutionTime / executedTests.length : 0;
-        
-        // Analysis time is estimated as a fixed overhead per test
-        const analysisTime = results.length * 10; // 10ms per test estimate
-        
-        return { totalExecutionTime, averageTestTime, analysisTime };
-    }
-
-    /**
-     * Calculate precision (Positive Predictive Value)
-     */
-    private calculatePrecision(truePositives: number, falsePositives: number): number {
-        const denominator = truePositives + falsePositives;
-        return denominator > 0 ? truePositives / denominator : 0;
-    }
-
-    /**
-     * Calculate recall (Sensitivity)
-     */
-    private calculateRecall(truePositives: number, falseNegatives: number): number {
-        const denominator = truePositives + falseNegatives;
-        return denominator > 0 ? truePositives / denominator : 0;
-    }
-
-    /**
-     * Calculate F1 score
-     */
-    private calculateF1Score(precision: number, recall: number): number {
-        const denominator = precision + recall;
-        return denominator > 0 ? (2 * precision * recall) / denominator : 0;
-    }
-
-    /**
-     * Calculate specificity (True Negative Rate)
-     */
-    private calculateSpecificity(trueNegatives: number, falsePositives: number): number {
-        const denominator = trueNegatives + falsePositives;
-        return denominator > 0 ? trueNegatives / denominator : 0;
-    }
-
-    /**
-     * Calculate accuracy
-     */
-    private calculateAccuracy(
-        truePositives: number,
-        trueNegatives: number,
-        falsePositives: number,
-        falseNegatives: number
-    ): number {
-        const total = truePositives + trueNegatives + falsePositives + falseNegatives;
-        return total > 0 ? (truePositives + trueNegatives) / total : 0;
-    }
-
-    /**
-     * Calculate Negative Predictive Value
-     */
-    private calculateNegativePredictiveValue(trueNegatives: number, falseNegatives: number): number {
-        const denominator = trueNegatives + falseNegatives;
-        return denominator > 0 ? trueNegatives / denominator : 0;
-    }
-
-    /**
-     * Calculate Matthews Correlation Coefficient
-     */
-    private calculateMatthewsCorrelationCoefficient(
-        tp: number, tn: number, fp: number, fn: number
-    ): number {
-        const numerator = (tp * tn) - (fp * fn);
-        const denominator = Math.sqrt((tp + fp) * (tp + fn) * (tn + fp) * (tn + fn));
-        return denominator > 0 ? numerator / denominator : 0;
-    }
-
-    /**
-     * Calculate mean of an array
-     */
-    private calculateMean(values: number[]): number {
-        return values.length > 0 ? values.reduce((sum, val) => sum + val, 0) / values.length : 0;
-    }
-
-    /**
-     * Calculate standard deviation
-     */
-    private calculateStandardDeviation(values: number[]): number {
-        if (values.length <= 1) return 0;
-        
-        const mean = this.calculateMean(values);
-        const variance = values.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / (values.length - 1);
-        return Math.sqrt(variance);
-    }
-
-    /**
-     * Perform t-test between two samples
-     */
-    private performTTest(sample1: number[], sample2: number[]): { pValue: number; effectSize: number } {
-        if (sample1.length === 0 || sample2.length === 0) {
-            return { pValue: 1, effectSize: 0 };
-        }
-
-        const mean1 = this.calculateMean(sample1);
-        const mean2 = this.calculateMean(sample2);
-        const std1 = this.calculateStandardDeviation(sample1);
-        const std2 = this.calculateStandardDeviation(sample2);
-        
-        // Cohen's d (effect size)
-        const pooledStd = Math.sqrt(((sample1.length - 1) * std1 * std1 + (sample2.length - 1) * std2 * std2) / 
-                                   (sample1.length + sample2.length - 2));
-        const effectSize = pooledStd > 0 ? (mean2 - mean1) / pooledStd : 0;
-
-        // Simplified t-test (assumes equal variances)
-        const standardError = pooledStd * Math.sqrt(1/sample1.length + 1/sample2.length);
-        const tStatistic = standardError > 0 ? (mean2 - mean1) / standardError : 0;
-        
-        // Approximate p-value calculation (simplified)
-        const degreesOfFreedom = sample1.length + sample2.length - 2;
-        const pValue = this.approximateTDistribution(Math.abs(tStatistic), degreesOfFreedom);
-
-        return { pValue, effectSize };
-    }
-
-    /**
-     * Calculate confidence interval
-     */
-    private calculateConfidenceInterval(values: number[], confidence: number): [number, number] {
-        if (values.length === 0) return [0, 0];
-        
-        const mean = this.calculateMean(values);
-        const std = this.calculateStandardDeviation(values);
-        const marginOfError = 1.96 * (std / Math.sqrt(values.length)); // 95% CI approximation
-        
-        return [mean - marginOfError, mean + marginOfError];
-    }
-
-    /**
-     * Calculate linear regression for trend analysis
-     */
-    private calculateLinearRegression(values: number[]): {
-        slope: number;
-        intercept: number;
-        rSquared: number;
-        pValue: number;
-    } {
-        const n = values.length;
-        if (n < 2) return { slope: 0, intercept: 0, rSquared: 0, pValue: 1 };
-
-        const x = Array.from({ length: n }, (_, i) => i);
-        const xMean = this.calculateMean(x);
-        const yMean = this.calculateMean(values);
-
-        let numerator = 0;
-        let denominator = 0;
-        
-        for (let i = 0; i < n; i++) {
-            numerator += (x[i] - xMean) * (values[i] - yMean);
-            denominator += (x[i] - xMean) * (x[i] - xMean);
-        }
-
-        const slope = denominator > 0 ? numerator / denominator : 0;
-        const intercept = yMean - slope * xMean;
-
         // Calculate R-squared
-        let ssRes = 0;
-        let ssTot = 0;
-        for (let i = 0; i < n; i++) {
-            const predicted = slope * x[i] + intercept;
-            ssRes += (values[i] - predicted) * (values[i] - predicted);
-            ssTot += (values[i] - yMean) * (values[i] - yMean);
-        }
+        const meanY = sumY / n;
+        const ssRes = y.reduce((sum, val, i) => {
+            const predicted = slope * x[i] + (sumY - slope * sumX) / n;
+            return sum + Math.pow(val - predicted, 2);
+        }, 0);
+        const ssTot = y.reduce((sum, val) => sum + Math.pow(val - meanY, 2), 0);
         const rSquared = ssTot > 0 ? 1 - (ssRes / ssTot) : 0;
 
-        // Simplified p-value calculation for slope significance
-        const standardError = Math.sqrt(ssRes / (n - 2)) / Math.sqrt(denominator);
-        const tStatistic = standardError > 0 ? Math.abs(slope) / standardError : 0;
-        const pValue = this.approximateTDistribution(tStatistic, n - 2);
-
-        return { slope, intercept, rSquared, pValue };
+        return { slope, rSquared };
     }
 
-    /**
-     * Approximate t-distribution p-value (simplified)
-     */
-    private approximateTDistribution(t: number, df: number): number {
-        // Very simplified approximation
-        if (df >= 30) {
-            // Use normal approximation for large df
-            return 2 * (1 - this.normalCDF(Math.abs(t)));
+    private generateRecommendations(
+        byApproach: Record<string, EffectivenessMetrics>,
+        rankings: { approach: string; f1Score: number; rank: number }[]
+    ): string[] {
+        const recommendations: string[] = [];
+        
+        const topApproach = rankings[0];
+        const worstApproach = rankings[rankings.length - 1];
+        
+        recommendations.push(`Best approach: ${topApproach.approach} (F1: ${(topApproach.f1Score * 100).toFixed(1)}%)`);
+        
+        if (topApproach.f1Score > 0.9) {
+            recommendations.push('Excellent performance achieved - consider deploying this approach');
+        } else if (topApproach.f1Score > 0.8) {
+            recommendations.push('Good performance - minor optimizations may help');
         } else {
-            // Crude approximation for small df
-            return Math.min(1, 2 * Math.exp(-0.5 * t * t) / Math.sqrt(2 * Math.PI));
+            recommendations.push('Performance has room for improvement - consider parameter tuning');
         }
-    }
-
-    /**
-     * Normal cumulative distribution function approximation
-     */
-    private normalCDF(x: number): number {
-        // Approximation using error function
-        return 0.5 * (1 + this.erf(x / Math.sqrt(2)));
-    }
-
-    /**
-     * Error function approximation
-     */
-    private erf(x: number): number {
-        // Abramowitz and Stegun approximation
-        const a1 =  0.254829592;
-        const a2 = -0.284496736;
-        const a3 =  1.421413741;
-        const a4 = -1.453152027;
-        const a5 =  1.061405429;
-        const p  =  0.3275911;
-
-        const sign = x >= 0 ? 1 : -1;
-        x = Math.abs(x);
-
-        const t = 1.0 / (1.0 + p * x);
-        const y = 1.0 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * Math.exp(-x * x);
-
-        return sign * y;
-    }
-
-    /**
-     * Export effectiveness data for external analysis
-     */
-    public exportEffectivenessData(
-        effectiveness: TechniqueEffectiveness[],
-        comparisons: ComparativeEffectiveness[],
-        trends: EffectivenessTrend[]
-    ): string {
-        const exportData = {
-            effectiveness,
-            comparisons,
-            trends,
-            metadata: {
-                exportTime: new Date().toISOString(),
-                config: this.config,
-                totalIterations: effectiveness.length,
-                techniques: [...new Set(effectiveness.map(e => e.technique))]
-            }
-        };
-
-        return JSON.stringify(exportData, null, 2);
-    }
-
-    /**
-     * Validate effectiveness calculation results
-     */
-    public validateResults(effectiveness: TechniqueEffectiveness): string[] {
-        const issues: string[] = [];
-
-        // Check for invalid metric values
-        if (effectiveness.precision < 0 || effectiveness.precision > 1) {
-            issues.push('Precision out of valid range [0,1]');
+        
+        // Check for concerning patterns
+        const avgReduction = Object.values(byApproach).reduce((sum, m) => sum + m.reductionRatio, 0) / Object.keys(byApproach).length;
+        if (avgReduction < 0.3) {
+            recommendations.push('Low test reduction - consider more aggressive selection criteria');
         }
-        if (effectiveness.recall < 0 || effectiveness.recall > 1) {
-            issues.push('Recall out of valid range [0,1]');
+        
+        const avgAPFD = Object.values(byApproach).reduce((sum, m) => sum + m.apfd, 0) / Object.keys(byApproach).length;
+        if (avgAPFD < 0.7) {
+            recommendations.push('Low APFD scores - improve test prioritization strategy');
         }
-        if (effectiveness.f1Score < 0 || effectiveness.f1Score > 1) {
-            issues.push('F1 score out of valid range [0,1]');
-        }
-        if (effectiveness.apfd < 0 || effectiveness.apfd > 1) {
-            issues.push('APFD out of valid range [0,1]');
-        }
-
-        // Check for logical inconsistencies
-        if (effectiveness.selectedTests > effectiveness.totalTests) {
-            issues.push('Selected tests cannot exceed total tests');
-        }
-        if (effectiveness.executedTests > effectiveness.selectedTests) {
-            issues.push('Executed tests cannot exceed selected tests');
-        }
-        if (effectiveness.faultsDetected > effectiveness.totalFaults) {
-            issues.push('Detected faults cannot exceed total faults');
-        }
-
-        // Check confusion matrix
-        const total = effectiveness.truePositives + effectiveness.falsePositives + 
-                     effectiveness.trueNegatives + effectiveness.falseNegatives;
-        if (total !== effectiveness.totalTests && total > 0) {
-            issues.push('Confusion matrix does not sum to total tests');
-        }
-
-        return issues;
+        
+        return recommendations;
     }
 }

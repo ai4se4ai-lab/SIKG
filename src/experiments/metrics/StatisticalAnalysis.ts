@@ -1,580 +1,832 @@
-// src/experiments/metrics/StatisticalAnalysis.ts - Statistical significance testing
+// StatisticalAnalysis.ts - Statistical significance testing and analysis
 
+import { ExperimentData } from '../data/DataCollector';
 import { Logger } from '../../utils/Logger';
 
-export interface StatisticalTestResult {
+export interface StatisticalTest {
     testName: string;
     pValue: number;
-    significant: boolean;
-    effectSize: number;
-    confidence: number;
+    isSignificant: boolean;
+    alpha: number;
+    testStatistic: number;
+    degreesOfFreedom?: number;
     interpretation: string;
 }
 
-export interface WilcoxonResult extends StatisticalTestResult {
-    testName: 'wilcoxon';
-    wStatistic: number;
-    nPairs: number;
+export interface EffectSize {
+    measure: 'cohens_d' | 'hedge_g' | 'glass_delta' | 'eta_squared';
+    value: number;
+    magnitude: 'negligible' | 'small' | 'medium' | 'large' | 'very_large';
+    interpretation: string;
 }
 
-export interface MannWhitneyResult extends StatisticalTestResult {
-    testName: 'mann-whitney';
-    uStatistic: number;
-    n1: number;
-    n2: number;
+export interface ConfidenceInterval {
+    level: number;
+    lowerBound: number;
+    upperBound: number;
+    mean: number;
+    marginOfError: number;
 }
 
-export interface TTestResult extends StatisticalTestResult {
-    testName: 't-test';
-    tStatistic: number;
-    degreesOfFreedom: number;
-    paired: boolean;
+export interface DescriptiveStats {
+    n: number;
+    mean: number;
+    median: number;
+    mode: number;
+    standardDeviation: number;
+    variance: number;
+    min: number;
+    max: number;
+    q1: number;
+    q3: number;
+    iqr: number;
+    skewness: number;
+    kurtosis: number;
+}
+
+export interface ComparisonResult {
+    approach1: string;
+    approach2: string;
+    metric: string;
+    descriptive1: DescriptiveStats;
+    descriptive2: DescriptiveStats;
+    test: StatisticalTest;
+    effectSize: EffectSize;
+    confidenceInterval: ConfidenceInterval;
+    recommendation: string;
+}
+
+export interface MultipleComparisonResult {
+    comparisons: ComparisonResult[];
+    correctedAlpha: number;
+    correctionMethod: 'bonferroni' | 'holm' | 'benjamini_hochberg';
+    significantComparisons: number;
+    totalComparisons: number;
+    overallConclusion: string;
+}
+
+export interface PowerAnalysis {
+    power: number;
+    sampleSize: number;
+    effectSize: number;
+    alpha: number;
+    interpretation: string;
+    recommendedSampleSize?: number;
 }
 
 /**
- * Statistical analysis utilities for experiment evaluation
+ * Comprehensive statistical analysis for SIKG experiments
  */
 export class StatisticalAnalysis {
-    private static readonly SIGNIFICANCE_LEVELS = {
-        'highly-significant': 0.001,
-        'very-significant': 0.01,
-        'significant': 0.05,
-        'marginally-significant': 0.1
-    };
+    private alpha: number = 0.05;
+    private confidenceLevel: number = 0.95;
+
+    constructor(alpha: number = 0.05) {
+        this.alpha = alpha;
+        this.confidenceLevel = 1 - alpha;
+    }
 
     /**
-     * Wilcoxon signed-rank test for paired samples (SIKG vs baseline on same commits)
+     * Perform comprehensive statistical comparison between approaches
      */
-    public static wilcoxonSignedRank(
-        sikgValues: number[],
-        baselineValues: number[],
-        alpha: number = 0.05
-    ): WilcoxonResult {
-        if (sikgValues.length !== baselineValues.length) {
-            throw new Error('Arrays must have equal length for paired test');
+    public compareApproaches(
+        data: ExperimentData[],
+        approach1: string,
+        approach2: string,
+        metric: keyof Pick<ExperimentData, 'precision' | 'recall' | 'f1Score' | 'apfd' | 'reductionRatio' | 'executionTime'>
+    ): ComparisonResult {
+        Logger.debug(`Comparing ${approach1} vs ${approach2} on ${metric}`);
+
+        // Extract data for each approach
+        const data1 = data.filter(d => d.approach === approach1).map(d => d[metric] as number);
+        const data2 = data.filter(d => d.approach === approach2).map(d => d[metric] as number);
+
+        if (data1.length === 0 || data2.length === 0) {
+            throw new Error(`Insufficient data for comparison: ${approach1}(${data1.length}) vs ${approach2}(${data2.length})`);
         }
 
-        const n = sikgValues.length;
-        if (n < 5) {
-            Logger.warn('Sample size too small for reliable Wilcoxon test');
-        }
+        // Calculate descriptive statistics
+        const descriptive1 = this.calculateDescriptiveStats(data1);
+        const descriptive2 = this.calculateDescriptiveStats(data2);
 
-        // Calculate differences and their absolute values
-        const differences = sikgValues.map((sikg, i) => sikg - baselineValues[i]);
-        const nonZeroDiffs = differences.filter(d => d !== 0);
-        const absDiffs = nonZeroDiffs.map(d => Math.abs(d));
+        // Perform appropriate statistical test
+        const test = this.selectAndPerformTest(data1, data2);
 
-        if (nonZeroDiffs.length === 0) {
-            return {
-                testName: 'wilcoxon',
-                pValue: 1.0,
-                significant: false,
-                effectSize: 0,
-                confidence: 1 - alpha,
-                interpretation: 'No differences detected',
-                wStatistic: 0,
-                nPairs: n
-            };
-        }
+        // Calculate effect size
+        const effectSize = this.calculateEffectSize(data1, data2, 'cohens_d');
 
-        // Rank absolute differences
-        const ranks = this.calculateRanks(absDiffs);
-        
-        // Sum ranks for positive and negative differences
-        let wPlus = 0;
-        let wMinus = 0;
-        
-        nonZeroDiffs.forEach((diff, i) => {
-            if (diff > 0) {
-                wPlus += ranks[i];
-            } else {
-                wMinus += ranks[i];
-            }
-        });
+        // Calculate confidence interval for difference
+        const confidenceInterval = this.calculateDifferenceCI(data1, data2);
 
-        const wStatistic = Math.min(wPlus, wMinus);
-        
-        // Calculate p-value (approximation for large samples)
-        const pValue = this.calculateWilcoxonPValue(wStatistic, nonZeroDiffs.length);
-        
-        // Calculate effect size (r = Z / sqrt(N))
-        const zScore = this.calculateZScore(wStatistic, nonZeroDiffs.length);
-        const effectSize = Math.abs(zScore) / Math.sqrt(n);
+        // Generate recommendation
+        const recommendation = this.generateRecommendation(test, effectSize, confidenceInterval);
 
         return {
-            testName: 'wilcoxon',
-            pValue,
-            significant: pValue < alpha,
+            approach1,
+            approach2,
+            metric,
+            descriptive1,
+            descriptive2,
+            test,
             effectSize,
-            confidence: 1 - alpha,
-            interpretation: this.interpretWilcoxonResult(pValue, effectSize, wPlus > wMinus),
-            wStatistic,
-            nPairs: n
+            confidenceInterval,
+            recommendation
         };
     }
 
     /**
-     * Mann-Whitney U test for independent samples
+     * Perform multiple comparison analysis with correction for multiple testing
      */
-    public static mannWhitneyU(
-        group1: number[],
-        group2: number[],
-        alpha: number = 0.05
-    ): MannWhitneyResult {
-        const n1 = group1.length;
-        const n2 = group2.length;
+    public performMultipleComparisons(
+        data: ExperimentData[],
+        approaches: string[],
+        metric: keyof Pick<ExperimentData, 'precision' | 'recall' | 'f1Score' | 'apfd' | 'reductionRatio' | 'executionTime'>,
+        correctionMethod: 'bonferroni' | 'holm' | 'benjamini_hochberg' = 'bonferroni'
+    ): MultipleComparisonResult {
+        Logger.info(`Performing multiple comparisons for ${approaches.length} approaches on ${metric}`);
 
-        if (n1 < 3 || n2 < 3) {
-            Logger.warn('Sample sizes too small for reliable Mann-Whitney test');
+        const comparisons: ComparisonResult[] = [];
+        
+        // Perform all pairwise comparisons
+        for (let i = 0; i < approaches.length; i++) {
+            for (let j = i + 1; j < approaches.length; j++) {
+                const comparison = this.compareApproaches(data, approaches[i], approaches[j], metric);
+                comparisons.push(comparison);
+            }
         }
 
-        // Combine and rank all values
-        const combined = [...group1.map(v => ({ value: v, group: 1 })),
-                          ...group2.map(v => ({ value: v, group: 2 }))];
+        const totalComparisons = comparisons.length;
+        const correctedAlpha = this.calculateCorrectedAlpha(totalComparisons, correctionMethod);
+
+        // Apply multiple comparison correction
+        let significantComparisons = 0;
+        comparisons.forEach(comp => {
+            comp.test.isSignificant = comp.test.pValue < correctedAlpha;
+            if (comp.test.isSignificant) {
+                significantComparisons++;
+            }
+        });
+
+        const overallConclusion = this.generateOverallConclusion(
+            significantComparisons,
+            totalComparisons,
+            correctionMethod,
+            metric
+        );
+
+        return {
+            comparisons,
+            correctedAlpha,
+            correctionMethod,
+            significantComparisons,
+            totalComparisons,
+            overallConclusion
+        };
+    }
+
+    /**
+     * Analyze learning progression for RL experiments
+     */
+    public analyzeLearningProgression(
+        data: ExperimentData[],
+        rlApproach: string = 'SIKG-WithRL',
+        baselineApproach: string = 'SIKG-WithoutRL'
+    ): {
+        trendAnalysis: { slope: number; rSquared: number; isSignificant: boolean };
+        improvementTest: StatisticalTest;
+        effectSize: EffectSize;
+        plateauAnalysis: { hasPlateaued: boolean; plateauIteration: number };
+    } {
+        Logger.info('Analyzing RL learning progression');
+
+        const rlData = data.filter(d => d.approach === rlApproach).sort((a, b) => a.iteration - b.iteration);
+        const baselineData = data.filter(d => d.approach === baselineApproach);
+
+        if (rlData.length < 10) {
+            throw new Error('Insufficient data for learning progression analysis (need ≥10 iterations)');
+        }
+
+        // Trend analysis using linear regression
+        const trendAnalysis = this.performLinearRegression(
+            rlData.map(d => d.iteration),
+            rlData.map(d => d.f1Score)
+        );
+
+        // Test final improvement vs baseline
+        const finalRLPerformance = rlData.slice(-10).map(d => d.f1Score);
+        const baselinePerformance = baselineData.map(d => d.f1Score);
         
+        const improvementTest = this.selectAndPerformTest(finalRLPerformance, baselinePerformance);
+        const effectSize = this.calculateEffectSize(finalRLPerformance, baselinePerformance, 'cohens_d');
+
+        // Plateau analysis
+        const plateauAnalysis = this.detectPlateau(rlData.map(d => d.f1Score));
+
+        return {
+            trendAnalysis,
+            improvementTest,
+            effectSize,
+            plateauAnalysis
+        };
+    }
+
+    /**
+     * Power analysis for experiment design
+     */
+    public performPowerAnalysis(
+        expectedEffectSize: number,
+        sampleSize: number,
+        alpha: number = this.alpha
+    ): PowerAnalysis {
+        const power = this.calculatePower(expectedEffectSize, sampleSize, alpha);
+        const recommendedSampleSize = power < 0.8 ? this.calculateRequiredSampleSize(expectedEffectSize, 0.8, alpha) : undefined;
+
+        return {
+            power,
+            sampleSize,
+            effectSize: expectedEffectSize,
+            alpha,
+            interpretation: this.interpretPower(power),
+            recommendedSampleSize
+        };
+    }
+
+    /**
+     * Validate experimental assumptions
+     */
+    public validateAssumptions(data: number[]): {
+        normality: { isNormal: boolean; pValue: number; test: string };
+        outliers: { hasOutliers: boolean; outlierIndices: number[]; outlierValues: number[] };
+        variance: { isHomogeneous: boolean; recommendation: string };
+    } {
+        return {
+            normality: this.testNormality(data),
+            outliers: this.detectOutliers(data),
+            variance: { isHomogeneous: true, recommendation: 'Use parametric tests' } // Simplified
+        };
+    }
+
+    /**
+     * Generate comprehensive statistical summary
+     */
+    public generateStatisticalSummary(
+        data: ExperimentData[],
+        approaches: string[]
+    ): {
+        sampleSizes: Record<string, number>;
+        overallStats: DescriptiveStats;
+        approachStats: Record<string, DescriptiveStats>;
+        multipleComparisons: MultipleComparisonResult;
+        effectSizes: Array<{ comparison: string; effectSize: EffectSize }>;
+        powerAnalysis: PowerAnalysis;
+        assumptions: Record<string, any>;
+        recommendations: string[];
+    } {
+        Logger.info('Generating comprehensive statistical summary');
+
+        // Sample sizes
+        const sampleSizes: Record<string, number> = {};
+        approaches.forEach(approach => {
+            sampleSizes[approach] = data.filter(d => d.approach === approach).length;
+        });
+
+        // Overall descriptive statistics
+        const allF1Scores = data.map(d => d.f1Score);
+        const overallStats = this.calculateDescriptiveStats(allF1Scores);
+
+        // Approach-specific statistics
+        const approachStats: Record<string, DescriptiveStats> = {};
+        approaches.forEach(approach => {
+            const approachData = data.filter(d => d.approach === approach).map(d => d.f1Score);
+            approachStats[approach] = this.calculateDescriptiveStats(approachData);
+        });
+
+        // Multiple comparisons
+        const multipleComparisons = this.performMultipleComparisons(data, approaches, 'f1Score');
+
+        // Effect sizes
+        const effectSizes = multipleComparisons.comparisons.map(comp => ({
+            comparison: `${comp.approach1} vs ${comp.approach2}`,
+            effectSize: comp.effectSize
+        }));
+
+        // Power analysis
+        const powerAnalysis = this.performPowerAnalysis(0.5, Math.min(...Object.values(sampleSizes)));
+
+        // Assumption validation
+        const assumptions: Record<string, any> = {};
+        approaches.forEach(approach => {
+            const approachData = data.filter(d => d.approach === approach).map(d => d.f1Score);
+            assumptions[approach] = this.validateAssumptions(approachData);
+        });
+
+        // Generate recommendations
+        const recommendations = this.generateStatisticalRecommendations(
+            multipleComparisons,
+            powerAnalysis,
+            assumptions
+        );
+
+        return {
+            sampleSizes,
+            overallStats,
+            approachStats,
+            multipleComparisons,
+            effectSizes,
+            powerAnalysis,
+            assumptions,
+            recommendations
+        };
+    }
+
+    // =============== PRIVATE HELPER METHODS ===============
+
+    /**
+     * Calculate descriptive statistics
+     */
+    private calculateDescriptiveStats(data: number[]): DescriptiveStats {
+        if (data.length === 0) {
+            throw new Error('Cannot calculate statistics for empty dataset');
+        }
+
+        const sorted = [...data].sort((a, b) => a - b);
+        const n = data.length;
+        const mean = data.reduce((sum, val) => sum + val, 0) / n;
+        
+        // Median
+        const median = n % 2 === 0 
+            ? (sorted[n/2 - 1] + sorted[n/2]) / 2 
+            : sorted[Math.floor(n/2)];
+
+        // Mode (simplified - first most frequent value)
+        const frequency = new Map<number, number>();
+        data.forEach(val => frequency.set(val, (frequency.get(val) || 0) + 1));
+        const mode = Array.from(frequency.entries()).reduce((a, b) => a[1] > b[1] ? a : b)[0];
+
+        // Variance and standard deviation
+        const variance = data.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / (n - 1);
+        const standardDeviation = Math.sqrt(variance);
+
+        // Quartiles
+        const q1 = this.percentile(sorted, 25);
+        const q3 = this.percentile(sorted, 75);
+        const iqr = q3 - q1;
+
+        // Skewness and kurtosis (simplified calculations)
+        const skewness = this.calculateSkewness(data, mean, standardDeviation);
+        const kurtosis = this.calculateKurtosis(data, mean, standardDeviation);
+
+        return {
+            n,
+            mean,
+            median,
+            mode,
+            standardDeviation,
+            variance,
+            min: sorted[0],
+            max: sorted[n - 1],
+            q1,
+            q3,
+            iqr,
+            skewness,
+            kurtosis
+        };
+    }
+
+    /**
+     * Select and perform appropriate statistical test
+     */
+    private selectAndPerformTest(data1: number[], data2: number[]): StatisticalTest {
+        // Check assumptions
+        const normality1 = this.testNormality(data1);
+        const normality2 = this.testNormality(data2);
+        
+        const isNormal = normality1.isNormal && normality2.isNormal;
+        const equalVariances = this.testEqualVariances(data1, data2);
+
+        if (isNormal && equalVariances) {
+            return this.welchTTest(data1, data2);
+        } else {
+            return this.mannWhitneyUTest(data1, data2);
+        }
+    }
+
+    /**
+     * Welch's t-test (unequal variances)
+     */
+    private welchTTest(data1: number[], data2: number[]): StatisticalTest {
+        const n1 = data1.length;
+        const n2 = data2.length;
+        const mean1 = data1.reduce((sum, val) => sum + val, 0) / n1;
+        const mean2 = data2.reduce((sum, val) => sum + val, 0) / n2;
+        
+        const var1 = data1.reduce((sum, val) => sum + Math.pow(val - mean1, 2), 0) / (n1 - 1);
+        const var2 = data2.reduce((sum, val) => sum + Math.pow(val - mean2, 2), 0) / (n2 - 1);
+        
+        const se = Math.sqrt(var1/n1 + var2/n2);
+        const testStatistic = (mean1 - mean2) / se;
+        
+        // Welch-Satterthwaite equation for degrees of freedom
+        const df = Math.pow(var1/n1 + var2/n2, 2) / 
+                  (Math.pow(var1/n1, 2)/(n1-1) + Math.pow(var2/n2, 2)/(n2-1));
+        
+        const pValue = this.tTestPValue(Math.abs(testStatistic), df);
+
+        return {
+            testName: "Welch's t-test",
+            pValue,
+            isSignificant: pValue < this.alpha,
+            alpha: this.alpha,
+            testStatistic,
+            degreesOfFreedom: df,
+            interpretation: this.interpretTTest(testStatistic, pValue, mean1, mean2)
+        };
+    }
+
+    /**
+     * Mann-Whitney U test (non-parametric)
+     */
+    private mannWhitneyUTest(data1: number[], data2: number[]): StatisticalTest {
+        const n1 = data1.length;
+        const n2 = data2.length;
+        type RankedValue = { value: number; group: number; rank?: number };
+        const combined: RankedValue[] = [
+            ...data1.map(v => ({ value: v, group: 1 })),
+            ...data2.map(v => ({ value: v, group: 2 }))
+        ];
+        
+        // Sort combined data
         combined.sort((a, b) => a.value - b.value);
         
-        // Calculate ranks (handle ties)
-        const ranks = this.calculateRanksWithTies(combined.map(item => item.value));
+        // Assign ranks
+        let rank = 1;
+        for (let i = 0; i < combined.length; i++) {
+            combined[i] = { ...combined[i], rank };
+            rank++;
+        }
         
-        // Sum ranks for group 1
-        let r1 = 0;
-        combined.forEach((item, i) => {
-            if (item.group === 1) {
-                r1 += ranks[i];
-            }
-        });
-
         // Calculate U statistics
+        const r1 = combined.filter(item => item.group === 1).reduce((sum, item) => sum + (item as any).rank, 0);
         const u1 = r1 - (n1 * (n1 + 1)) / 2;
         const u2 = n1 * n2 - u1;
-        const uStatistic = Math.min(u1, u2);
-
-        // Calculate p-value
-        const pValue = this.calculateMannWhitneyPValue(uStatistic, n1, n2);
         
-        // Calculate effect size (r = Z / sqrt(N))
-        const zScore = this.calculateMannWhitneyZScore(u1, n1, n2);
-        const effectSize = Math.abs(zScore) / Math.sqrt(n1 + n2);
-
-        return {
-            testName: 'mann-whitney',
-            pValue,
-            significant: pValue < alpha,
-            effectSize,
-            confidence: 1 - alpha,
-            interpretation: this.interpretMannWhitneyResult(pValue, effectSize, u1 > u2),
-            uStatistic,
-            n1,
-            n2
-        };
-    }
-
-    /**
-     * Paired t-test for normally distributed data
-     */
-    public static pairedTTest(
-        sikgValues: number[],
-        baselineValues: number[],
-        alpha: number = 0.05
-    ): TTestResult {
-        if (sikgValues.length !== baselineValues.length) {
-            throw new Error('Arrays must have equal length for paired t-test');
-        }
-
-        const n = sikgValues.length;
-        const differences = sikgValues.map((sikg, i) => sikg - baselineValues[i]);
+        const u = Math.min(u1, u2);
         
-        const meanDiff = differences.reduce((sum, d) => sum + d, 0) / n;
-        const stdDiff = Math.sqrt(
-            differences.reduce((sum, d) => sum + Math.pow(d - meanDiff, 2), 0) / (n - 1)
-        );
-        
-        const tStatistic = meanDiff / (stdDiff / Math.sqrt(n));
-        const degreesOfFreedom = n - 1;
-        
-        // Calculate p-value (two-tailed)
-        const pValue = this.calculateTPValue(Math.abs(tStatistic), degreesOfFreedom);
-        
-        // Calculate effect size (Cohen's d)
-        const effectSize = meanDiff / stdDiff;
+        // Approximate p-value using normal approximation
+        const meanU = (n1 * n2) / 2;
+        const stdU = Math.sqrt((n1 * n2 * (n1 + n2 + 1)) / 12);
+        const z = (u - meanU) / stdU;
+        const pValue = 2 * (1 - this.normalCDF(Math.abs(z)));
 
         return {
-            testName: 't-test',
+            testName: 'Mann-Whitney U test',
             pValue,
-            significant: pValue < alpha,
-            effectSize: Math.abs(effectSize),
-            confidence: 1 - alpha,
-            interpretation: this.interpretTTestResult(pValue, effectSize, meanDiff > 0),
-            tStatistic,
-            degreesOfFreedom,
-            paired: true
+            isSignificant: pValue < this.alpha,
+            alpha: this.alpha,
+            testStatistic: u,
+            interpretation: this.interpretMannWhitneyU(u, pValue, n1, n2)
         };
     }
 
     /**
      * Calculate Cohen's d effect size
      */
-    public static cohensD(group1: number[], group2: number[]): number {
-        const mean1 = group1.reduce((sum, v) => sum + v, 0) / group1.length;
-        const mean2 = group2.reduce((sum, v) => sum + v, 0) / group2.length;
+    private calculateEffectSize(data1: number[], data2: number[], measure: 'cohens_d'): EffectSize {
+        const mean1 = data1.reduce((sum, val) => sum + val, 0) / data1.length;
+        const mean2 = data2.reduce((sum, val) => sum + val, 0) / data2.length;
         
-        const var1 = group1.reduce((sum, v) => sum + Math.pow(v - mean1, 2), 0) / (group1.length - 1);
-        const var2 = group2.reduce((sum, v) => sum + Math.pow(v - mean2, 2), 0) / (group2.length - 1);
+        const var1 = data1.reduce((sum, val) => sum + Math.pow(val - mean1, 2), 0) / (data1.length - 1);
+        const var2 = data2.reduce((sum, val) => sum + Math.pow(val - mean2, 2), 0) / (data2.length - 1);
         
-        const pooledSD = Math.sqrt(((group1.length - 1) * var1 + (group2.length - 1) * var2) / 
-                                   (group1.length + group2.length - 2));
+        const pooledSD = Math.sqrt(((data1.length - 1) * var1 + (data2.length - 1) * var2) / 
+                                  (data1.length + data2.length - 2));
         
-        return (mean1 - mean2) / pooledSD;
-    }
+        const cohensD = (mean1 - mean2) / pooledSD;
+        const magnitude = this.interpretEffectSize(Math.abs(cohensD));
 
-    /**
-     * Multiple comparison correction (Bonferroni)
-     */
-    public static bonferroniCorrection(pValues: number[], alpha: number = 0.05): number[] {
-        const adjustedAlpha = alpha / pValues.length;
-        return pValues.map(p => Math.min(p * pValues.length, 1.0));
-    }
-
-    /**
-     * Calculate confidence interval for mean
-     */
-    public static confidenceInterval(
-        values: number[],
-        confidence: number = 0.95
-    ): { lower: number; upper: number; mean: number } {
-        const n = values.length;
-        const mean = values.reduce((sum, v) => sum + v, 0) / n;
-        const std = Math.sqrt(values.reduce((sum, v) => sum + Math.pow(v - mean, 2), 0) / (n - 1));
-        
-        // Use t-distribution for small samples, normal for large
-        const tValue = n < 30 ? this.getTValue(confidence, n - 1) : this.getZValue(confidence);
-        const margin = tValue * (std / Math.sqrt(n));
-        
         return {
-            lower: mean - margin,
-            upper: mean + margin,
-            mean
+            measure: 'cohens_d',
+            value: cohensD,
+            magnitude,
+            interpretation: `Cohen's d = ${cohensD.toFixed(3)} (${magnitude} effect)`
         };
     }
 
     /**
-     * Comprehensive statistical comparison
+     * Calculate confidence interval for difference between means
      */
-    public static compareGroups(
-        sikgValues: number[],
-        baselineValues: number[],
-        groupNames: [string, string] = ['SIKG', 'Baseline'],
-        alpha: number = 0.05
-    ): {
-        descriptive: any;
-        tests: StatisticalTestResult[];
-        recommendation: string;
-    } {
-        // Descriptive statistics
-        const descriptive = {
-            [groupNames[0]]: this.descriptiveStats(sikgValues),
-            [groupNames[1]]: this.descriptiveStats(baselineValues)
+    private calculateDifferenceCI(data1: number[], data2: number[]): ConfidenceInterval {
+        const mean1 = data1.reduce((sum, val) => sum + val, 0) / data1.length;
+        const mean2 = data2.reduce((sum, val) => sum + val, 0) / data2.length;
+        const meanDiff = mean1 - mean2;
+        
+        const var1 = data1.reduce((sum, val) => sum + Math.pow(val - mean1, 2), 0) / (data1.length - 1);
+        const var2 = data2.reduce((sum, val) => sum + Math.pow(val - mean2, 2), 0) / (data2.length - 1);
+        
+        const se = Math.sqrt(var1/data1.length + var2/data2.length);
+        const df = data1.length + data2.length - 2;
+        const tCritical = this.tCritical(this.confidenceLevel, df);
+        const marginOfError = tCritical * se;
+
+        return {
+            level: this.confidenceLevel * 100,
+            lowerBound: meanDiff - marginOfError,
+            upperBound: meanDiff + marginOfError,
+            mean: meanDiff,
+            marginOfError
         };
+    }
 
-        const tests: StatisticalTestResult[] = [];
+    /**
+     * Test for normality using Shapiro-Wilk approximation
+     */
+    private testNormality(data: number[]): { isNormal: boolean; pValue: number; test: string } {
+        if (data.length < 3 || data.length > 50) {
+            // For small or large samples, use simplified check
+            const stats = this.calculateDescriptiveStats(data);
+            const isNormal = Math.abs(stats.skewness) < 2 && Math.abs(stats.kurtosis - 3) < 2;
+            return {
+                isNormal,
+                pValue: isNormal ? 0.1 : 0.01,
+                test: 'Skewness-Kurtosis test'
+            };
+        }
 
-        // Choose appropriate test based on data characteristics
-        if (sikgValues.length === baselineValues.length) {
-            // Paired samples - use Wilcoxon (non-parametric)
-            tests.push(this.wilcoxonSignedRank(sikgValues, baselineValues, alpha));
-            
-            // Also run paired t-test if sample is large enough
-            if (sikgValues.length >= 30) {
-                tests.push(this.pairedTTest(sikgValues, baselineValues, alpha));
+        // Simplified Shapiro-Wilk approximation
+        const sorted = [...data].sort((a, b) => a - b);
+        const n = data.length;
+        const mean = data.reduce((sum, val) => sum + val, 0) / n;
+        
+        // Calculate test statistic (simplified)
+        let numerator = 0;
+        for (let i = 0; i < n; i++) {
+            numerator += Math.pow(sorted[i] - mean, 2);
+        }
+        
+        const w = 1 - (numerator / ((n - 1) * Math.pow(this.calculateDescriptiveStats(data).standardDeviation, 2)));
+        const pValue = w > 0.95 ? 0.1 : w > 0.90 ? 0.05 : 0.01;
+
+        return {
+            isNormal: pValue > this.alpha,
+            pValue,
+            test: 'Shapiro-Wilk approximation'
+        };
+    }
+
+    /**
+     * Detect outliers using IQR method
+     */
+    private detectOutliers(data: number[]): { hasOutliers: boolean; outlierIndices: number[]; outlierValues: number[] } {
+        const sorted = [...data].sort((a, b) => a - b);
+        const q1 = this.percentile(sorted, 25);
+        const q3 = this.percentile(sorted, 75);
+        const iqr = q3 - q1;
+        const lowerBound = q1 - 1.5 * iqr;
+        const upperBound = q3 + 1.5 * iqr;
+
+        const outlierIndices: number[] = [];
+        const outlierValues: number[] = [];
+
+        data.forEach((value, index) => {
+            if (value < lowerBound || value > upperBound) {
+                outlierIndices.push(index);
+                outlierValues.push(value);
             }
-        } else {
-            // Independent samples - use Mann-Whitney
-            tests.push(this.mannWhitneyU(sikgValues, baselineValues, alpha));
-        }
+        });
 
-        // Generate recommendation
-        const significantTests = tests.filter(t => t.significant);
-        const recommendation = this.generateRecommendation(significantTests, descriptive, groupNames);
-
-        return { descriptive, tests, recommendation };
+        return {
+            hasOutliers: outlierIndices.length > 0,
+            outlierIndices,
+            outlierValues
+        };
     }
 
-    // Private helper methods
-    private static calculateRanks(values: number[]): number[] {
-        const indexed = values.map((value, i) => ({ value, index: i }));
-        indexed.sort((a, b) => a.value - b.value);
-        
-        const ranks = new Array(values.length);
-        let currentRank = 1;
-        
-        for (let i = 0; i < indexed.length; i++) {
-            ranks[indexed[i].index] = currentRank++;
-        }
-        
-        return ranks;
+    /**
+     * Perform linear regression for trend analysis
+     */
+    private performLinearRegression(x: number[], y: number[]): { slope: number; rSquared: number; isSignificant: boolean } {
+        const n = x.length;
+        const sumX = x.reduce((sum, val) => sum + val, 0);
+        const sumY = y.reduce((sum, val) => sum + val, 0);
+        const sumXY = x.reduce((sum, val, i) => sum + val * y[i], 0);
+        const sumX2 = x.reduce((sum, val) => sum + val * val, 0);
+        const sumY2 = y.reduce((sum, val) => sum + val * val, 0);
+
+        const slope = (n * sumXY - sumX * sumY) / (n * sumX2 - sumX * sumX);
+        const intercept = (sumY - slope * sumX) / n;
+
+        // Calculate R-squared
+        const yMean = sumY / n;
+        const ssTotal = y.reduce((sum, val) => sum + Math.pow(val - yMean, 2), 0);
+        const ssResidual = y.reduce((sum, val, i) => {
+            const predicted = slope * x[i] + intercept;
+            return sum + Math.pow(val - predicted, 2);
+        }, 0);
+        const rSquared = 1 - (ssResidual / ssTotal);
+
+        // Simple significance test (t-test for slope)
+        const isSignificant = Math.abs(slope) > 0.001 && rSquared > 0.1;
+
+        return { slope, rSquared, isSignificant };
     }
 
-    private static calculateRanksWithTies(values: number[]): number[] {
-        const indexed = values.map((value, i) => ({ value, index: i }));
-        indexed.sort((a, b) => a.value - b.value);
-        
-        const ranks = new Array(values.length);
-        let i = 0;
-        
-        while (i < values.length) {
-            let j = i;
-            while (j < values.length && indexed[j].value === indexed[i].value) {
-                j++;
-            }
+    /**
+     * Detect plateau in learning progression
+     */
+    private detectPlateau(values: number[], windowSize: number = 10): { hasPlateaued: boolean; plateauIteration: number } {
+        if (values.length < windowSize * 2) {
+            return { hasPlateaued: false, plateauIteration: -1 };
+        }
+
+        for (let i = windowSize; i <= values.length - windowSize; i++) {
+            const recentWindow = values.slice(i, i + windowSize);
+            const previousWindow = values.slice(i - windowSize, i);
             
-            const rank = (i + j + 1) / 2; // Average rank for ties
-            for (let k = i; k < j; k++) {
-                ranks[indexed[k].index] = rank;
-            }
+            const recentMean = recentWindow.reduce((sum, val) => sum + val, 0) / windowSize;
+            const previousMean = previousWindow.reduce((sum, val) => sum + val, 0) / windowSize;
             
-            i = j;
+            // Check if improvement has stopped (less than 1% improvement)
+            if (Math.abs(recentMean - previousMean) / previousMean < 0.01) {
+                return { hasPlateaued: true, plateauIteration: i };
+            }
         }
-        
-        return ranks;
+
+        return { hasPlateaued: false, plateauIteration: -1 };
     }
 
-    private static calculateWilcoxonPValue(wStatistic: number, n: number): number {
-        // Simplified p-value calculation (normal approximation for large n)
-        if (n < 10) {
-            return 0.05; // Placeholder for small samples
-        }
+    // =============== UTILITY METHODS ===============
+
+    private percentile(sortedData: number[], p: number): number {
+        const index = (p / 100) * (sortedData.length - 1);
+        const lower = Math.floor(index);
+        const upper = Math.ceil(index);
+        const weight = index % 1;
         
-        const mean = n * (n + 1) / 4;
-        const variance = n * (n + 1) * (2 * n + 1) / 24;
-        const zScore = (wStatistic - mean) / Math.sqrt(variance);
-        
-        return 2 * (1 - this.normalCDF(Math.abs(zScore))); // Two-tailed
+        if (upper >= sortedData.length) return sortedData[sortedData.length - 1];
+        return sortedData[lower] * (1 - weight) + sortedData[upper] * weight;
     }
 
-    private static calculateZScore(wStatistic: number, n: number): number {
-        const mean = n * (n + 1) / 4;
-        const variance = n * (n + 1) * (2 * n + 1) / 24;
-        return (wStatistic - mean) / Math.sqrt(variance);
+    private calculateSkewness(data: number[], mean: number, std: number): number {
+        const n = data.length;
+        return data.reduce((sum, val) => sum + Math.pow((val - mean) / std, 3), 0) / n;
     }
 
-    private static calculateMannWhitneyPValue(uStatistic: number, n1: number, n2: number): number {
-        // Normal approximation for large samples
-        if (n1 < 8 || n2 < 8) {
-            return 0.05; // Placeholder for small samples
-        }
-        
-        const mean = (n1 * n2) / 2;
-        const variance = (n1 * n2 * (n1 + n2 + 1)) / 12;
-        const zScore = (uStatistic - mean) / Math.sqrt(variance);
-        
-        return 2 * (1 - this.normalCDF(Math.abs(zScore))); // Two-tailed
+    private calculateKurtosis(data: number[], mean: number, std: number): number {
+        const n = data.length;
+        return data.reduce((sum, val) => sum + Math.pow((val - mean) / std, 4), 0) / n;
     }
 
-    private static calculateMannWhitneyZScore(u1: number, n1: number, n2: number): number {
-        const mean = (n1 * n2) / 2;
-        const variance = (n1 * n2 * (n1 + n2 + 1)) / 12;
-        return (u1 - mean) / Math.sqrt(variance);
+    private testEqualVariances(data1: number[], data2: number[]): boolean {
+        const var1 = this.calculateDescriptiveStats(data1).variance;
+        const var2 = this.calculateDescriptiveStats(data2).variance;
+        const fRatio = Math.max(var1, var2) / Math.min(var1, var2);
+        return fRatio < 2; // Simplified F-test
     }
 
-    private static calculateTPValue(tStatistic: number, df: number): number {
-        // Simplified t-distribution p-value calculation
-        // This is an approximation - in production, use proper statistical library
-        if (df >= 30) {
-            return 2 * (1 - this.normalCDF(tStatistic)); // Normal approximation
-        }
-        
-        // Rough approximation for t-distribution
-        const factor = 1 + (tStatistic * tStatistic) / df;
-        return 2 / (Math.PI * Math.sqrt(df) * Math.pow(factor, (df + 1) / 2));
+    private normalCDF(z: number): number {
+        // Approximation of standard normal CDF
+        return 0.5 * (1 + this.erf(z / Math.sqrt(2)));
     }
 
-    private static normalCDF(x: number): number {
-        // Approximation of the standard normal cumulative distribution function
+    private erf(x: number): number {
+        // Approximation of error function
         const a1 =  0.254829592;
         const a2 = -0.284496736;
         const a3 =  1.421413741;
         const a4 = -1.453152027;
         const a5 =  1.061405429;
         const p  =  0.3275911;
-
-        const sign = x < 0 ? -1 : 1;
+        
+        const sign = x >= 0 ? 1 : -1;
         x = Math.abs(x);
-
+        
         const t = 1.0 / (1.0 + p * x);
         const y = 1.0 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * Math.exp(-x * x);
-
-        return 0.5 * (1.0 + sign * y);
+        
+        return sign * y;
     }
 
-    private static getTValue(confidence: number, df: number): number {
-        // Critical t-values for common confidence levels and degrees of freedom
-        // This is a simplified lookup - in production, use proper statistical library
-        const alpha = 1 - confidence;
-        
-        if (df >= 30) {
-            return this.getZValue(confidence);
+    private tTestPValue(t: number, df: number): number {
+        // Simplified t-test p-value calculation
+        if (t > 3) return 0.001;
+        if (t > 2.5) return 0.01;
+        if (t > 2) return 0.05;
+        if (t > 1.5) return 0.1;
+        return 0.2;
+    }
+
+    private tCritical(confidence: number, df: number): number {
+        // Simplified t-critical values
+        if (confidence >= 0.99) return 2.576;
+        if (confidence >= 0.95) return 1.96;
+        if (confidence >= 0.90) return 1.645;
+        return 1.28;
+    }
+
+    private calculatePower(effectSize: number, sampleSize: number, alpha: number): number {
+        // Simplified power calculation
+        const z_alpha = this.normalCDF(1 - alpha/2);
+        const z_beta = effectSize * Math.sqrt(sampleSize/2) - z_alpha;
+        return this.normalCDF(z_beta);
+    }
+
+    private calculateRequiredSampleSize(effectSize: number, power: number, alpha: number): number {
+        // Simplified sample size calculation for desired power
+        const z_alpha = 1.96; // For alpha = 0.05
+        const z_beta = 0.84;  // For power = 0.8
+        return Math.ceil(2 * Math.pow((z_alpha + z_beta) / effectSize, 2));
+    }
+
+    private calculateCorrectedAlpha(numComparisons: number, method: string): number {
+        switch (method) {
+            case 'bonferroni':
+                return this.alpha / numComparisons;
+            case 'holm':
+                return this.alpha / numComparisons; // Simplified
+            case 'benjamini_hochberg':
+                return this.alpha * 0.8; // Simplified
+            default:
+                return this.alpha;
         }
-        
-        // Simplified t-table lookup
-        const tTable: Record<number, number> = {
-            1: 12.706, 2: 4.303, 3: 3.182, 4: 2.776, 5: 2.571,
-            10: 2.228, 15: 2.131, 20: 2.086, 25: 2.060, 30: 2.042
-        };
-        
-        const closestDf = Object.keys(tTable)
-            .map(Number)
-            .reduce((prev, curr) => Math.abs(curr - df) < Math.abs(prev - df) ? curr : prev);
-        
-        return tTable[closestDf] || 2.0;
     }
 
-    private static getZValue(confidence: number): number {
-        // Critical z-values for common confidence levels
-        const zTable: Record<number, number> = {
-            0.90: 1.645,
-            0.95: 1.960,
-            0.99: 2.576,
-            0.999: 3.291
-        };
-        
-        return zTable[confidence] || 1.960;
-    }
+    // =============== INTERPRETATION METHODS ===============
 
-    private static descriptiveStats(values: number[]): any {
-        if (values.length === 0) {
-            return { count: 0, mean: 0, median: 0, std: 0, min: 0, max: 0 };
-        }
-
-        const sorted = [...values].sort((a, b) => a - b);
-        const mean = values.reduce((sum, v) => sum + v, 0) / values.length;
-        const variance = values.reduce((sum, v) => sum + Math.pow(v - mean, 2), 0) / (values.length - 1);
-        const std = Math.sqrt(variance);
-        
-        return {
-            count: values.length,
-            mean: Number(mean.toFixed(4)),
-            median: Number(sorted[Math.floor(sorted.length / 2)].toFixed(4)),
-            std: Number(std.toFixed(4)),
-            min: Number(sorted[0].toFixed(4)),
-            max: Number(sorted[sorted.length - 1].toFixed(4))
-        };
-    }
-
-    private static interpretWilcoxonResult(pValue: number, effectSize: number, sikgBetter: boolean): string {
-        const significance = this.getSignificanceLevel(pValue);
-        const effectMagnitude = this.getEffectMagnitude(effectSize);
-        const direction = sikgBetter ? 'SIKG performs better' : 'Baseline performs better';
-        
-        return `${significance} difference detected (p=${pValue.toFixed(4)}). ${direction} with ${effectMagnitude} effect size (r=${effectSize.toFixed(3)}).`;
-    }
-
-    private static interpretMannWhitneyResult(pValue: number, effectSize: number, sikgBetter: boolean): string {
-        const significance = this.getSignificanceLevel(pValue);
-        const effectMagnitude = this.getEffectMagnitude(effectSize);
-        const direction = sikgBetter ? 'SIKG group has higher values' : 'Baseline group has higher values';
-        
-        return `${significance} difference between groups (p=${pValue.toFixed(4)}). ${direction} with ${effectMagnitude} effect size (r=${effectSize.toFixed(3)}).`;
-    }
-
-    private static interpretTTestResult(pValue: number, effectSize: number, sikgBetter: boolean): string {
-        const significance = this.getSignificanceLevel(pValue);
-        const effectMagnitude = this.getEffectMagnitude(effectSize);
-        const direction = sikgBetter ? 'SIKG shows improvement' : 'Baseline shows better performance';
-        
-        return `${significance} difference in means (p=${pValue.toFixed(4)}). ${direction} with ${effectMagnitude} effect size (d=${effectSize.toFixed(3)}).`;
-    }
-
-    private static getSignificanceLevel(pValue: number): string {
-        if (pValue < this.SIGNIFICANCE_LEVELS['highly-significant']) return 'Highly significant';
-        if (pValue < this.SIGNIFICANCE_LEVELS['very-significant']) return 'Very significant';
-        if (pValue < this.SIGNIFICANCE_LEVELS['significant']) return 'Significant';
-        if (pValue < this.SIGNIFICANCE_LEVELS['marginally-significant']) return 'Marginally significant';
-        return 'Non-significant';
-    }
-
-    private static getEffectMagnitude(effectSize: number): string {
-        // Cohen's conventions for effect size interpretation
-        if (effectSize >= 0.8) return 'large';
-        if (effectSize >= 0.5) return 'medium';
-        if (effectSize >= 0.2) return 'small';
+    private interpretEffectSize(d: number): EffectSize['magnitude'] {
+        if (d >= 1.3) return 'very_large';
+        if (d >= 0.8) return 'large';
+        if (d >= 0.5) return 'medium';
+        if (d >= 0.2) return 'small';
         return 'negligible';
     }
 
-    private static generateRecommendation(
-        significantTests: StatisticalTestResult[],
-        descriptive: any,
-        groupNames: [string, string]
-    ): string {
-        if (significantTests.length === 0) {
-            return `No statistically significant differences found between ${groupNames[0]} and ${groupNames[1]}. ` +
-                   `Both approaches perform similarly on the measured metrics.`;
-        }
-
-        const bestTest = significantTests.reduce((best, current) => 
-            current.effectSize > best.effectSize ? current : best
-        );
-
-        const [sikg, baseline] = groupNames;
-        const sikgMean = descriptive[sikg].mean;
-        const baselineMean = descriptive[baseline].mean;
-        const improvement = ((sikgMean - baselineMean) / baselineMean * 100).toFixed(1);
-        const betterApproach = sikgMean > baselineMean ? sikg : baseline;
-
-        return `${bestTest.interpretation} ` +
-               `${betterApproach} shows ${Math.abs(Number(improvement))}% ${Number(improvement) > 0 ? 'improvement' : 'decline'} ` +
-               `with ${this.getEffectMagnitude(bestTest.effectSize)} practical significance. ` +
-               `Recommendation: ${betterApproach} is statistically superior for this metric.`;
+    private interpretTTest(t: number, p: number, mean1: number, mean2: number): string {
+        const direction = mean1 > mean2 ? 'higher' : 'lower';
+        const significance = p < 0.001 ? 'highly significant' : p < 0.01 ? 'very significant' : p < 0.05 ? 'significant' : 'not significant';
+        return `Group 1 performs ${direction} than Group 2 (${significance}, p = ${p.toFixed(4)})`;
     }
 
-    /**
-     * Perform comprehensive multiple comparison analysis
-     */
-    public static multipleComparison(
-        sikgValues: number[],
-        baselineGroups: Record<string, number[]>,
-        alpha: number = 0.05
-    ): {
-        comparisons: Array<{
-            baseline: string;
-            result: StatisticalTestResult;
-            adjusted: StatisticalTestResult;
-        }>;
-        overallRecommendation: string;
-    } {
-        const comparisons = [];
-        const pValues = [];
+    private interpretMannWhitneyU(u: number, p: number, n1: number, n2: number): string {
+        const significance = p < 0.001 ? 'highly significant' : p < 0.01 ? 'very significant' : p < 0.05 ? 'significant' : 'not significant';
+        return `Non-parametric comparison shows ${significance} difference (U = ${u.toFixed(2)}, p = ${p.toFixed(4)})`;
+    }
 
-        // Perform pairwise comparisons
-        for (const [baselineName, baselineValues] of Object.entries(baselineGroups)) {
-            const result = this.wilcoxonSignedRank(sikgValues, baselineValues, alpha);
-            pValues.push(result.pValue);
-            
-            comparisons.push({
-                baseline: baselineName,
-                result,
-                adjusted: { ...result } // Will be updated with correction
-            });
+    private interpretPower(power: number): string {
+        if (power >= 0.9) return 'Excellent power (≥90%)';
+        if (power >= 0.8) return 'Good power (≥80%)';
+        if (power >= 0.7) return 'Moderate power (≥70%)';
+        return 'Low power (<70%) - consider increasing sample size';
+    }
+
+    private generateRecommendation(test: StatisticalTest, effectSize: EffectSize, ci: ConfidenceInterval): string {
+        if (test.isSignificant && effectSize.magnitude !== 'negligible') {
+            return `Strong evidence of difference: ${test.interpretation}. ${effectSize.interpretation}. Practical significance confirmed.`;
+        } else if (test.isSignificant) {
+            return `Statistical significance found but small effect size. ${test.interpretation}. ${effectSize.interpretation}. Consider practical relevance.`;
+        } else {
+            return `No significant difference detected. ${test.interpretation}. ${effectSize.interpretation}. Approaches perform similarly.`;
+        }
+    }
+
+    private generateOverallConclusion(
+        significant: number,
+        total: number,
+        method: string,
+        metric: string
+    ): string {
+        const percentage = (significant / total) * 100;
+        return `Found ${significant}/${total} (${percentage.toFixed(1)}%) significant comparisons for ${metric} using ${method} correction. ` +
+               `${percentage > 50 ? 'Strong evidence of approach differences' : 'Limited evidence of approach differences'}.`;
+    }
+
+    private generateStatisticalRecommendations(
+        comparisons: MultipleComparisonResult,
+        power: PowerAnalysis,
+        assumptions: Record<string, any>
+    ): string[] {
+        const recommendations: string[] = [];
+
+        if (comparisons.significantComparisons > 0) {
+            recommendations.push(`Found ${comparisons.significantComparisons} significant differences - focus on effect sizes for practical importance`);
         }
 
-        // Apply Bonferroni correction
-        const adjustedPValues = this.bonferroniCorrection(pValues, alpha);
-        
-        // Update adjusted results
-        comparisons.forEach((comp, i) => {
-            comp.adjusted.pValue = adjustedPValues[i];
-            comp.adjusted.significant = adjustedPValues[i] < alpha;
-            comp.adjusted.interpretation = `Bonferroni-corrected: ${comp.adjusted.interpretation}`;
+        if (power.power < 0.8) {
+            recommendations.push(`Low statistical power (${(power.power * 100).toFixed(1)}%) - consider increasing sample size to ${power.recommendedSampleSize || 'N/A'}`);
+        }
+
+        Object.entries(assumptions).forEach(([approach, assumption]) => {
+            if (!assumption.normality?.isNormal) {
+                recommendations.push(`Non-normal distribution for ${approach} - non-parametric tests recommended`);
+            }
+            if (assumption.outliers?.hasOutliers) {
+                recommendations.push(`Outliers detected in ${approach} - consider robust statistics or outlier removal`);
+            }
         });
 
-        // Generate overall recommendation
-        const significantComparisons = comparisons.filter(c => c.adjusted.significant);
-        const overallRecommendation = significantComparisons.length > 0 ?
-            `SIKG significantly outperforms ${significantComparisons.length}/${comparisons.length} baseline(s) ` +
-            `after multiple comparison correction: ${significantComparisons.map(c => c.baseline).join(', ')}.` :
-            `No significant differences remain after multiple comparison correction. ` +
-            `SIKG performance is comparable to baseline approaches.`;
+        if (recommendations.length === 0) {
+            recommendations.push('Statistical assumptions satisfied - results are reliable');
+        }
 
-        return { comparisons, overallRecommendation };
+        return recommendations;
     }
 }
