@@ -1,21 +1,309 @@
 {
+  "name": "sikg-experiments",
+  "displayName": "SIKG Experiments Framework",
+  "description": "Evaluation framework for Semantic Impact Knowledge Graph (SIKG) test selection approach",
+  "version": "1.0.0",
+  "main": "./out/experiments/index.js",
+  "engines": {
+    "vscode": "^1.74.0",
+    "node": ">=16.0.0"
+  },
+  "categories": [
+    "Testing",
+    "Other"
+  ],
+  "keywords": [
+    "test selection",
+    "regression testing", 
+    "knowledge graph",
+    "machine learning",
+    "experiments",
+    "evaluation"
+  ],
   "scripts": {
-    "experiment:all": "ts-node src/experiments/index.ts all",
-    "experiment:effectiveness": "ts-node src/experiments/index.ts effectiveness",
-    "experiment:efficiency": "ts-node src/experiments/index.ts efficiency", 
-    "experiment:comparison": "ts-node src/experiments/index.ts comparison",
-    "experiment:rl": "ts-node src/experiments/index.ts rl",
-    "experiment:scalability": "ts-node src/experiments/index.ts scalability",
-    "experiment:compare": "ts-node src/experiments/index.ts compare",
-    "experiment:clean": "rm -rf src/experiments/output/*",
-    "experiment:setup": "mkdir -p src/experiments/output/results src/experiments/output/reports src/experiments/output/charts",
-    "test:experiments": "jest src/experiments --testPathPattern=\\.test\\.(ts|js)$"
+    "build": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "clean": "rimraf out",
+    "pretest": "npm run build",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage",
+    "experiments:all": "node out/experiments/index.js --run-all",
+    "experiments:rq1": "node out/experiments/index.js --rq1",
+    "experiments:rq2": "node out/experiments/index.js --rq2", 
+    "experiments:rq3": "node out/experiments/index.js --rq3",
+    "experiments:rq4": "node out/experiments/index.js --rq4",
+    "experiments:smoke": "node out/experiments/index.js --smoke-test",
+    "experiments:validate": "node out/experiments/index.js --validate-baselines",
+    "report:generate": "node out/experiments/index.js --generate-report",
+    "lint": "eslint src --ext ts",
+    "lint:fix": "eslint src --ext ts --fix",
+    "format": "prettier --write \"src/**/*.ts\"",
+    "package": "vsce package",
+    "deploy": "vsce publish"
+  },
+  "dependencies": {
+    "csv-parser": "^3.0.0",
+    "csv-writer": "^1.6.0",
+    "mathjs": "^11.11.0",
+    "uuid": "^9.0.0"
   },
   "devDependencies": {
-    "@types/node": "^20.0.0",
-    "ts-node": "^10.9.0",
-    "typescript": "^5.0.0",
-    "jest": "^29.0.0",
-    "@types/jest": "^29.0.0"
-  }
+    "@types/jest": "^29.5.5",
+    "@types/node": "18.x",
+    "@types/uuid": "^9.0.4",
+    "@types/vscode": "^1.74.0",
+    "@typescript-eslint/eslint-plugin": "^6.7.0",
+    "@typescript-eslint/parser": "^6.7.0",
+    "@vscode/test-cli": "^0.0.4",
+    "@vscode/test-electron": "^2.3.4",
+    "@vscode/vsce": "^2.21.0",
+    "eslint": "^8.49.0",
+    "eslint-config-prettier": "^9.0.0",
+    "eslint-plugin-prettier": "^5.0.0",
+    "jest": "^29.7.0",
+    "prettier": "^3.0.3",
+    "rimraf": "^5.0.1",
+    "ts-jest": "^29.1.1",
+    "typescript": "^5.2.2"
+  },
+  "optionalDependencies": {
+    "chart.js": "^4.4.0",
+    "d3": "^7.8.5",
+    "plotly.js": "^2.26.0"
+  },
+  "activationEvents": [
+    "onCommand:sikg.runFullEvaluation",
+    "onCommand:sikg.runRQ1",
+    "onCommand:sikg.runRQ2", 
+    "onCommand:sikg.runRQ3",
+    "onCommand:sikg.runRQ4",
+    "onCommand:sikg.smokeTest",
+    "onCommand:sikg.validateBaselines",
+    "onCommand:sikg.generateReport"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "sikg.runFullEvaluation",
+        "title": "SIKG: Run Full Evaluation",
+        "icon": "$(beaker)"
+      },
+      {
+        "command": "sikg.runRQ1", 
+        "title": "SIKG: Run RQ1 (KG Construction)",
+        "icon": "$(graph)"
+      },
+      {
+        "command": "sikg.runRQ2",
+        "title": "SIKG: Run RQ2 (Semantic Analysis)", 
+        "icon": "$(search)"
+      },
+      {
+        "command": "sikg.runRQ3",
+        "title": "SIKG: Run RQ3 (Test Selection & RL)",
+        "icon": "$(robot)"
+      },
+      {
+        "command": "sikg.runRQ4",
+        "title": "SIKG: Run RQ4 (Scalability)",
+        "icon": "$(dashboard)"
+      },
+      {
+        "command": "sikg.smokeTest",
+        "title": "SIKG: Run Smoke Test",
+        "icon": "$(check)"
+      },
+      {
+        "command": "sikg.validateBaselines",
+        "title": "SIKG: Validate Baselines",
+        "icon": "$(verified)"
+      },
+      {
+        "command": "sikg.generateReport",
+        "title": "SIKG: Generate Report",
+        "icon": "$(file-text)"
+      }
+    ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "sikg.runFullEvaluation",
+          "when": "true"
+        },
+        {
+          "command": "sikg.runRQ1",
+          "when": "true"
+        },
+        {
+          "command": "sikg.runRQ2", 
+          "when": "true"
+        },
+        {
+          "command": "sikg.runRQ3",
+          "when": "true"
+        },
+        {
+          "command": "sikg.runRQ4",
+          "when": "true"
+        },
+        {
+          "command": "sikg.smokeTest",
+          "when": "true"
+        },
+        {
+          "command": "sikg.validateBaselines",
+          "when": "true"
+        },
+        {
+          "command": "sikg.generateReport",
+          "when": "true"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "sikg.runFullEvaluation",
+          "group": "sikg@1",
+          "when": "explorerResourceIsFolder"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "SIKG Experiments",
+      "properties": {
+        "sikg.experiments.iterations": {
+          "type": "number",
+          "default": 100,
+          "description": "Number of iterations for RL experiments (RQ3)",
+          "minimum": 10,
+          "maximum": 1000
+        },
+        "sikg.experiments.mutationCount": {
+          "type": "number", 
+          "default": 50,
+          "description": "Number of synthetic faults to inject per experiment",
+          "minimum": 10,
+          "maximum": 200
+        },
+        "sikg.experiments.selectionThreshold": {
+          "type": "number",
+          "default": 0.3,
+          "description": "Impact threshold for test selection",
+          "minimum": 0.1,
+          "maximum": 0.9
+        },
+        "sikg.experiments.maxDepth": {
+          "type": "number",
+          "default": 3,
+          "description": "Maximum depth for impact propagation",
+          "minimum": 1,
+          "maximum": 10
+        },
+        "sikg.experiments.outputDir": {
+          "type": "string",
+          "default": "./src/experiments/output",
+          "description": "Directory for experiment output files"
+        },
+        "sikg.experiments.generateCharts": {
+          "type": "boolean",
+          "default": true,
+          "description": "Generate visualization charts in reports"
+        },
+        "sikg.experiments.enableRL": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable reinforcement learning experiments"
+        },
+        "sikg.experiments.subjects": {
+          "type": "array",
+          "default": [
+            "requests",
+            "flask", 
+            "pytest"
+          ],
+          "description": "Subject projects for evaluation",
+          "items": {
+            "type": "string"
+          }
+        },
+        "sikg.experiments.logLevel": {
+          "type": "string",
+          "enum": ["debug", "info", "warn", "error"],
+          "default": "info",
+          "description": "Logging level for experiments"
+        }
+      }
+    }
+  },
+  "license": "MIT",
+  "files": [
+    "out/**/*",
+    "src/**/*",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "jest": {
+    "preset": "ts-jest",
+    "testEnvironment": "node",
+    "roots": ["<rootDir>/src"],
+    "testMatch": [
+      "**/__tests__/**/*.test.ts",
+      "**/?(*.)+(spec|test).ts"
+    ],
+    "transform": {
+      "^.+\\.ts$": "ts-jest"
+    },
+    "collectCoverageFrom": [
+      "src/**/*.ts",
+      "!src/**/*.d.ts",
+      "!src/**/__tests__/**/*"
+    ],
+    "coverageDirectory": "coverage",
+    "coverageReporters": [
+      "text",
+      "lcov",
+      "html"
+    ],
+    "testTimeout": 30000
+  },
+  "eslintConfig": {
+    "parser": "@typescript-eslint/parser",
+    "extends": [
+      "eslint:recommended",
+      "@typescript-eslint/recommended",
+      "prettier"
+    ],
+    "plugins": [
+      "@typescript-eslint",
+      "prettier"
+    ],
+    "rules": {
+      "prettier/prettier": "error",
+      "@typescript-eslint/no-unused-vars": "error",
+      "@typescript-eslint/no-explicit-any": "warn",
+      "@typescript-eslint/explicit-function-return-type": "off"
+    },
+    "env": {
+      "node": true,
+      "es6": true
+    }
+  },
+  "prettier": {
+    "semi": true,
+    "trailingComma": "es5",
+    "singleQuote": true,
+    "printWidth": 100,
+    "tabWidth": 4
+  },
+  "vsce": {
+    "dependencies": false
+  },
+  "extensionDependencies": [],
+  "badges": [
+    {
+      "url": "https://img.shields.io/badge/SIKG-Experiments-blue",
+      "href": "https://github.com/ai4se4ai-lab/SIKG/src/experiments",
+      "description": "SIKG Experiments Framework"
+    }
+  ]
 }
